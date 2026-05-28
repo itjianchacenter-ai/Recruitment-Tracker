@@ -1027,7 +1027,7 @@ function CandidateDetail({ c, onClose, onEdit, onDelete, onAdvance, onApprove, o
           {Object.keys(DOC_LABELS).map((k) => {
             const step = Number(k);
             const info = DOC_LABELS[step];
-            const ported = step === 1; // ฟอร์มที่พอร์ตเข้าระบบจริงแล้ว (เพิ่มทีละ step)
+            const ported = [1, 6].includes(step); // ฟอร์มที่พอร์ตเข้าระบบจริงแล้ว (เพิ่มทีละ step)
             const made = !!c.generated_docs?.[step];
             return (
               <div key={step} className={`p-3 rounded-lg border ${made ? 'bg-emerald-50 border-emerald-200' : 'bg-white border-slate-200'}`}>
@@ -1062,6 +1062,20 @@ function CandidateDetail({ c, onClose, onEdit, onDelete, onAdvance, onApprove, o
       {docView === 1 && c.generated_docs?.[1] && (
         <DocViewer title={DOC_LABELS[1].thai} onClose={() => setDocView(null)}>
           <ManpowerRequestDoc data={c.generated_docs[1].data} candidate={c} workflow={c.approval_workflows?.[1]} />
+        </DocViewer>
+      )}
+      {docForm === 6 && (
+        <ApprovalForm
+          initial={c.generated_docs?.[6]?.data ?? null}
+          candidate={c}
+          user={{ name: actor }}
+          onClose={() => setDocForm(null)}
+          onSave={(data, approvers) => { onSaveDoc(6, data, approvers); setDocForm(null); }}
+        />
+      )}
+      {docView === 6 && c.generated_docs?.[6] && (
+        <DocViewer title={DOC_LABELS[6].thai} onClose={() => setDocView(null)}>
+          <ApprovalDoc data={c.generated_docs[6].data} candidate={c} workflow={c.approval_workflows?.[6]} />
         </DocViewer>
       )}
 
@@ -1494,6 +1508,181 @@ function ManpowerRequestDoc({ data, candidate, workflow }) {
         labels={[{ th: 'ต้นสังกัด', en: 'Requested by' }, { th: 'ผู้ตรวจสอบ (HR)', en: 'Verified by' }, { th: 'ผู้พิจารณา', en: 'Reviewed by' }, { th: 'ผู้อนุมัติ', en: 'Approved by' }]}
         workflow={workflow}
       />
+    </div>
+  );
+}
+
+// ===== Step 6: Recruitment Approval Form =====
+function ApprovalForm({ initial, candidate, user, onClose, onSave }) {
+  const [form, setForm] = useState(initial ?? {
+    division: candidate.department,
+    start_date: addDays(todayISO(), 14),
+    end_probation_date: addDays(todayISO(), 14 + 120),
+    level: 'JG5',
+    salary_current: '', salary_new: '', salary_post_probation: '',
+    allowance_items: [], remarks: '',
+    reason_type: 'new', replace_name: '', replace_reason: 'ลาออก',
+    employment_type: 'monthly', contract_months: 12, contract_start: todayISO(),
+    necessities: ['ขยายสายงานหรือแผนกใหม่'],
+    hr_received_date: '', hr_duration: '30',
+    hr_recruiter_name: user?.name ?? '', hr_recruiter_position: 'HR Recruiter'
+  });
+  const [approvers, setApprovers] = useState(() => (initial?._approvers) ?? [
+    { name: '', email: '', role: 'หัวหน้าต้นสังกัด' },
+    { name: '', email: '', role: 'HR Manager' },
+    { name: '', email: '', role: 'CFO' },
+    { name: '', email: '', role: 'CEO' }
+  ]);
+  const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
+  const toggleArr = (k, v) => setForm((f) => ({ ...f, [k]: f[k].includes(v) ? f[k].filter((x) => x !== v) : [...f[k], v] }));
+  const totalIncome = (parseMoney(form.salary_new) || 0) + (form.allowance_items || []).reduce((s, it) => s + (parseMoney(it.amount) || 0), 0);
+  const submit = (e) => {
+    e.preventDefault();
+    if (!form.salary_new?.trim()) { alert('กรุณากรอกเงินเดือนใหม่'); return; }
+    if (!approvers.every((a) => a.name && a.email)) { alert('กรุณากรอกชื่อ + อีเมลผู้อนุมัติให้ครบทุกคน'); return; }
+    onSave({ ...form, total_income: totalIncome, _approvers: approvers }, approvers);
+  };
+  return (
+    <Modal title="สร้าง Recruitment Approval Form" subtitle={`Step 6 · ${candidate.name || candidate.position}`} onClose={onClose} wide>
+      <form onSubmit={submit} className="space-y-3">
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="ฝ่าย"><input className="input" value={form.division} onChange={(e) => set('division', e.target.value)} /></Field>
+          <Field label="วันเริ่มงาน" required><input type="date" className="input" value={form.start_date} onChange={(e) => set('start_date', e.target.value)} /></Field>
+          <Field label="วันที่ครบทดลองงาน"><input type="date" className="input" value={form.end_probation_date} onChange={(e) => set('end_probation_date', e.target.value)} /></Field>
+        </div>
+        <Field label="เกรด/ระดับ" required>
+          <select className="input" value={form.level} onChange={(e) => set('level', e.target.value)}>{LEVELS.map((l) => <option key={l.code} value={l.code}>{l.code} ({l.label})</option>)}</select>
+        </Field>
+        <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 space-y-2">
+          <div className="text-xs font-semibold text-slate-700">ค่าจ้างและค่าตอบแทน</div>
+          <Field label="เงินเดือนใหม่ (ตามอัตราที่จะจ้าง)" required><input className="input" value={form.salary_new} onChange={(e) => set('salary_new', e.target.value)} placeholder="เช่น 30,000" /></Field>
+          <Field label="เงินเดือนปัจจุบัน (ถ้ามี)"><input className="input" value={form.salary_current} onChange={(e) => set('salary_current', e.target.value)} placeholder="เช่น 28,000 · หรือเว้นว่าง" /></Field>
+          <Field label="เงินเดือนหลังผ่านทดลองงาน (ถ้ามีการปรับ)"><input className="input" value={form.salary_post_probation} onChange={(e) => set('salary_post_probation', e.target.value)} placeholder="เช่น 32,000 · หรือเว้นว่าง" /></Field>
+          <div className="pt-1">
+            <div className="flex items-center justify-between mb-1">
+              <div className="text-xs font-semibold text-slate-700">ค่าตอบแทนอื่น ๆ (เพิ่มทีละรายการ)</div>
+              <button type="button" onClick={() => set('allowance_items', [...(form.allowance_items || []), { label: '', amount: '' }])} className="text-xs px-2 py-1 rounded bg-emerald-600 hover:bg-emerald-700 text-white">+ เพิ่มรายการ</button>
+            </div>
+            {(form.allowance_items || []).length === 0 && <div className="text-xs text-slate-400 italic py-1">ยังไม่มีรายการ — กด "+ เพิ่มรายการ" (เช่น ค่าตำแหน่ง · ค่าเดินทาง)</div>}
+            {(form.allowance_items || []).map((it, i) => (
+              <div key={i} className="flex items-center gap-2 mb-1">
+                <input className="input flex-1 text-xs" placeholder="ชื่อรายการ" value={it.label} onChange={(e) => set('allowance_items', form.allowance_items.map((x, j) => j === i ? { ...x, label: e.target.value } : x))} />
+                <input type="number" className="input w-32 text-xs text-right" placeholder="จำนวนเงิน" value={it.amount} onChange={(e) => set('allowance_items', form.allowance_items.map((x, j) => j === i ? { ...x, amount: e.target.value } : x))} />
+                <span className="text-xs text-slate-400">บาท</span>
+                <button type="button" onClick={() => set('allowance_items', form.allowance_items.filter((_, j) => j !== i))} className="text-rose-500 hover:text-rose-700 text-sm px-1">✕</button>
+              </div>
+            ))}
+            <div className="flex items-center justify-between mt-2 pt-2 border-t border-slate-200">
+              <div className="text-xs font-semibold text-slate-700">รวมรายได้ทั้งหมด</div>
+              <div className="text-sm font-bold text-emerald-700">{fmtMoney(totalIncome)} บาท / เดือน</div>
+            </div>
+          </div>
+        </div>
+        <Field label="หมายเหตุ"><textarea rows={2} className="input" value={form.remarks} onChange={(e) => set('remarks', e.target.value)} /></Field>
+        <div className="grid grid-cols-2 gap-3">
+          <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 space-y-1">
+            <div className="text-xs font-semibold text-slate-700">เหตุผลการขอว่าจ้าง</div>
+            <label className="flex items-center gap-2 text-sm"><input type="radio" name="rt2" checked={form.reason_type === 'new'} onChange={() => set('reason_type', 'new')} /> อัตราใหม่</label>
+            <label className="flex items-center gap-2 text-sm"><input type="radio" name="rt2" checked={form.reason_type === 'replace'} onChange={() => set('reason_type', 'replace')} /> เพื่อทดแทนพนักงาน</label>
+            {form.reason_type === 'replace' && (
+              <div className="space-y-1 ml-6">
+                <input className="input text-xs" placeholder="ชื่อพนักงาน" value={form.replace_name} onChange={(e) => set('replace_name', e.target.value)} />
+                <select className="input text-xs" value={form.replace_reason} onChange={(e) => set('replace_reason', e.target.value)}><option>ลาออก</option><option>โยกย้าย</option><option>อื่น ๆ</option></select>
+              </div>
+            )}
+          </div>
+          <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 space-y-1">
+            <div className="text-xs font-semibold text-slate-700">ลักษณะการจ้างงาน</div>
+            <label className="flex items-center gap-2 text-sm"><input type="radio" name="et2" checked={form.employment_type === 'monthly'} onChange={() => set('employment_type', 'monthly')} /> พนักงานรายเดือน</label>
+            <label className="flex items-center gap-2 text-sm"><input type="radio" name="et2" checked={form.employment_type === 'daily'} onChange={() => set('employment_type', 'daily')} /> พนักงานรายวัน</label>
+            <label className="flex items-center gap-2 text-sm"><input type="radio" name="et2" checked={form.employment_type === 'contract'} onChange={() => set('employment_type', 'contract')} /> พนักงานรายสัญญาจ้าง</label>
+            {form.employment_type === 'contract' && (
+              <div className="ml-6 grid grid-cols-2 gap-1">
+                <input type="number" className="input text-xs" placeholder="เดือน" value={form.contract_months} onChange={(e) => set('contract_months', Number(e.target.value))} />
+                <input type="date" className="input text-xs" value={form.contract_start} onChange={(e) => set('contract_start', e.target.value)} />
+              </div>
+            )}
+          </div>
+        </div>
+        <Field label="ความจำเป็นการขอว่าจ้าง (เลือกได้มากกว่า 1)">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-1 text-xs">
+            {NECESSITY_OPTIONS.map((n) => (
+              <label key={n} className={`p-2 rounded border cursor-pointer ${form.necessities.includes(n) ? 'bg-emerald-100 border-emerald-300 text-emerald-800' : 'bg-white border-slate-200 text-slate-600'}`}>
+                <input type="checkbox" className="mr-1" checked={form.necessities.includes(n)} onChange={() => toggleArr('necessities', n)} />{n}
+              </label>
+            ))}
+          </div>
+        </Field>
+        <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-3 space-y-2">
+          <div className="text-xs font-semibold text-indigo-800">ส่วนที่ 2 : สำหรับฝ่ายบริหารทรัพยากรบุคคล (HR กรอก)</div>
+          <div className="grid grid-cols-2 gap-2">
+            <Field label="วันที่รับแบบขออนุมัติรับพนักงาน"><input type="date" className="input" value={form.hr_received_date} onChange={(e) => set('hr_received_date', e.target.value)} /></Field>
+            <Field label="ระยะเวลาการสรรหา"><select className="input" value={form.hr_duration} onChange={(e) => set('hr_duration', e.target.value)}><option value="30">ภายใน 30 วัน</option><option value="45">ภายใน 45 วัน</option><option value="60">ภายใน 60 วัน</option></select></Field>
+            <Field label="ชื่อผู้รับผิดชอบการสรรหา"><input className="input" value={form.hr_recruiter_name} onChange={(e) => set('hr_recruiter_name', e.target.value)} /></Field>
+            <Field label="ตำแหน่ง"><input className="input" value={form.hr_recruiter_position} onChange={(e) => set('hr_recruiter_position', e.target.value)} /></Field>
+          </div>
+        </div>
+        <ApproverList approvers={approvers} setApprovers={setApprovers} label="ผู้อนุมัติรับพนักงาน" />
+        <div className="flex justify-end gap-2 pt-2">
+          <button type="button" onClick={onClose} className="px-3 py-2 text-sm text-slate-600 hover:text-slate-900">ยกเลิก</button>
+          <button type="submit" className="px-4 py-2 text-sm bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg">บันทึกเอกสาร + ส่งอนุมัติ</button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+function ApprovalDoc({ data, candidate, workflow }) {
+  const levelObj = LEVELS.find((l) => l.code === data.level) ?? { code: data.level || '—', label: '' };
+  const allowances = data.allowance_items || [];
+  const allowanceSum = allowances.reduce((s, it) => s + parseMoney(it.amount), 0);
+  const totalIncome = (data.total_income != null) ? data.total_income : (parseMoney(data.salary_new) + allowanceSum);
+  const nec = data.necessities ?? [];
+  return (
+    <div className="print-document">
+      <DocHeader step={6} candidate={candidate} />
+      <div className="section-bar">ส่วนที่ 1 : ข้อมูลพนักงาน</div>
+      <table className="form-table"><tbody>
+        <tr><td className="lbl" style={{ width: '15%' }}>ชื่อพนักงาน</td><td className="val" style={{ width: '35%' }}><b>{candidate.name || '(ยังไม่ระบุ)'}</b></td>
+            <td className="lbl" style={{ width: '15%' }}>ตำแหน่ง</td><td className="val" style={{ width: '35%' }}>{candidate.position}</td></tr>
+        <tr><td className="lbl">แผนก</td><td className="val">{candidate.department}</td><td className="lbl">ฝ่าย</td><td className="val">{data.division}</td></tr>
+        <tr><td className="lbl">วันเริ่มงาน</td><td className="val">{fmtDate(data.start_date)}</td><td className="lbl">วันที่ครบทดลองงาน</td><td className="val">{fmtDate(data.end_probation_date)}</td></tr>
+        <tr><td className="lbl">เกรด/ระดับ</td><td className="val" colSpan="3"><b>{levelObj.code}</b> {levelObj.label ? `(${levelObj.label})` : ''}</td></tr>
+      </tbody></table>
+      <div className="section-bar" style={{ marginTop: '12px' }}>ค่าจ้างและค่าตอบแทน</div>
+      <table className="form-table"><tbody>
+        <tr><td className="lbl" style={{ width: '40%' }}>เงินเดือนปัจจุบัน</td><td className="val" style={{ textAlign: 'right' }}>{data.salary_current ? `${fmtMoney(parseMoney(data.salary_current))} บาท` : '—'}</td></tr>
+        <tr><td className="lbl">เงินเดือนใหม่</td><td className="val" style={{ textAlign: 'right' }}><b>{data.salary_new ? `${fmtMoney(parseMoney(data.salary_new))} บาท` : '—'}</b></td></tr>
+        {allowances.filter((it) => it.label || it.amount).map((it, i) => (
+          <tr key={i}><td className="lbl" style={{ fontWeight: 'normal' }}>+ {it.label || 'ค่าตอบแทน'}</td><td className="val" style={{ textAlign: 'right' }}>{fmtMoney(parseMoney(it.amount))} บาท</td></tr>
+        ))}
+        <tr style={{ background: '#f1f5f9' }}><td className="lbl"><b>รวมรายได้ทั้งหมด / เดือน</b></td><td className="val" style={{ textAlign: 'right' }}><b>{fmtMoney(totalIncome)} บาท</b></td></tr>
+        <tr><td className="lbl">เงินเดือนหลังผ่านทดลองงาน</td><td className="val" style={{ textAlign: 'right' }}>{data.salary_post_probation ? `${fmtMoney(parseMoney(data.salary_post_probation))} บาท` : '—'}</td></tr>
+        {data.remarks && <tr><td className="lbl">หมายเหตุ</td><td className="val" style={{ whiteSpace: 'pre-wrap' }}>{data.remarks}</td></tr>}
+      </tbody></table>
+      <div className="section-bar" style={{ marginTop: '12px' }}>เหตุผลการขอว่าจ้าง · ลักษณะการจ้างงาน</div>
+      <div className="check-grid">
+        <Cb checked={data.reason_type === 'new'} label="อัตราใหม่" />
+        <Cb checked={data.employment_type === 'monthly'} label="พนักงานรายเดือน" />
+        <Cb checked={data.reason_type === 'replace'} label={`เพื่อทดแทนพนักงาน ${data.reason_type === 'replace' ? `(${data.replace_name} · ${data.replace_reason})` : ''}`} />
+        <Cb checked={data.employment_type === 'daily'} label="พนักงานรายวัน" />
+        <span></span>
+        <Cb checked={data.employment_type === 'contract'} label={`พนักงานรายสัญญาจ้าง ${data.employment_type === 'contract' ? `(${data.contract_months} เดือน)` : ''}`} />
+      </div>
+      <div className="section-bar" style={{ marginTop: '12px' }}>ความจำเป็นการขอว่าจ้าง</div>
+      <div className="check-grid">{NECESSITY_OPTIONS.map((n) => <Cb key={n} checked={nec.includes(n)} label={n} />)}</div>
+      <div className="section-bar" style={{ marginTop: '18px' }}>ส่วนที่ 2 : สำหรับฝ่ายบริหารทรัพยากรบุคคล</div>
+      <table className="form-table"><tbody>
+        <tr><td className="lbl" style={{ width: '25%' }}>วันที่รับแบบขออนุมัติรับพนักงาน</td><td className="val">{data.hr_received_date ? fmtDate(data.hr_received_date) : '_____ / _____ / _________'}</td>
+            <td className="lbl" style={{ width: '15%' }}>ระยะเวลาการสรรหา</td><td className="val"><Cb checked={data.hr_duration === '30'} label="30 วัน" /> &nbsp; <Cb checked={data.hr_duration === '45'} label="45 วัน" /> &nbsp; <Cb checked={data.hr_duration === '60'} label="60 วัน" /></td></tr>
+        <tr><td className="lbl">ชื่อผู้รับผิดชอบการสรรหา</td><td className="val">{data.hr_recruiter_name || '...........................'}</td><td className="lbl">ตำแหน่ง</td><td className="val">{data.hr_recruiter_position || '...........................'}</td></tr>
+      </tbody></table>
+      <div className="section-bar" style={{ marginTop: '14px' }}>ส่วนที่ 3 : สำหรับฝ่ายบริหารพิจารณาอนุมัติ</div>
+      <SignatureBlocks
+        labels={[{ th: 'ผู้ร้องขอ', en: 'Requested by' }, { th: 'ผู้ตรวจสอบ', en: 'Verified by' }, { th: 'ผู้พิจารณา', en: 'Reviewed by' }, { th: 'ผู้อนุมัติ', en: 'Approved by' }]}
+        workflow={workflow}
+      />
+      <div style={{ fontSize: '9px', color: '#94a3b8', marginTop: '12px', textAlign: 'center' }}>สร้างโดยระบบ Recruitment 120 Days · JIANCHA GROUP · {fmtDate(todayISO())}</div>
     </div>
   );
 }
