@@ -51,6 +51,25 @@ const LEVELS = [
   { code: 'UC1', label: 'FEVP' }, { code: 'UC2', label: 'SEVP' }, { code: 'UC3', label: 'C-Level / Pres.' }, { code: 'UC4', label: 'CEO' }
 ];
 
+const NECESSITY_OPTIONS = [
+  'เพิ่มกำลังคนเพื่อรองรับงานที่เพิ่มขึ้น',
+  'ทดแทนพนักงาน',
+  'ขยายสายงานหรือแผนกใหม่',
+  'รองรับแผนกลยุทธ์ของบริษัทในอนาคต',
+  'รองรับการเปลี่ยนแปลงด้านกฎหมาย',
+  'สนับสนุนโครงการเฉพาะกิจ',
+  'ปรับเปลี่ยนโครงสร้างตามแผนพัฒนา',
+  'รองรับการเข้าสู่ตลาดใหม่หรือขยายกลุ่มเป้าหมาย',
+  'รองรับความต้องการด้านเทคโนโลยีหรือเครื่องมือใหม่ๆ'
+];
+
+const DOC_LABELS = {
+  1: { name: 'Manpower Requisition Form',          thai: 'แบบฟอร์มขออนุมัติกำลังคน' },
+  5: { name: 'Interview Evaluation Form',          thai: 'แบบฟอร์มประเมินการสัมภาษณ์งาน' },
+  6: { name: 'Employee Recruitment Approval Form', thai: 'แบบฟอร์มขออนุมัติรับพนักงาน' },
+  8: { name: 'Probation Evaluation Form',          thai: 'แบบฟอร์มประเมินผลการทดลองงาน' }
+};
+
 const HR_EMAIL = 'Hr.jc@jianchatea.com';
 const STEP_2_DEADLINE_DAYS = 30;
 const PROBATION_DAYS       = 120;
@@ -309,6 +328,23 @@ export default function App() {
     await updateCandidate(c.id, { probation, steps, status: 'passed' });
   }
 
+  // Save a generated document (per step) + optional sequential approval workflow
+  async function saveDoc(c, step, data, approvers) {
+    const generated_docs = { ...(c.generated_docs ?? {}), [step]: { data, createdAt: new Date().toISOString(), createdBy: actor } };
+    const patch = { generated_docs };
+    if (approvers && APPROVAL_STEPS.includes(step)) {
+      patch.approval_workflows = {
+        ...(c.approval_workflows ?? {}),
+        [step]: {
+          status: 'in_progress',
+          createdAt: new Date().toISOString(),
+          approvers: approvers.map((a, i) => ({ ...a, status: i === 0 ? 'pending' : 'waiting', sequence: i + 1 }))
+        }
+      };
+    }
+    await updateCandidate(c.id, patch);
+  }
+
   const sectionDefs = [
     { key: 'open',       title: '🔍 Open Position',        sub: 'Sourcing · ยังไม่มีผู้สมัคร · Step 1–5' },
     { key: 'onboarding', title: '✍️ Process รับเข้าทำงาน',  sub: 'ได้ผู้สมัครแล้ว · Step 6–7' },
@@ -403,6 +439,8 @@ export default function App() {
           onEditName={() => setEditingName(opened)}
           onDropCandidate={() => dropCandidate(opened)}
           onCancelPosition={() => cancelPosition(opened)}
+          onSaveDoc={(step, data, approvers) => saveDoc(opened, step, data, approvers)}
+          actor={actor}
         />
       )}
 
@@ -881,12 +919,14 @@ function CandidateNameForm({ initial, position, onClose, onSave }) {
 // Candidate detail
 // ============================================================================
 
-function CandidateDetail({ c, onClose, onEdit, onDelete, onAdvance, onApprove, onToggleDoc, onRecordMilestone, onProbationPassed, onEditName, onDropCandidate, onCancelPosition }) {
+function CandidateDetail({ c, onClose, onEdit, onDelete, onAdvance, onApprove, onToggleDoc, onRecordMilestone, onProbationPassed, onEditName, onDropCandidate, onCancelPosition, onSaveDoc, actor }) {
   const status = deriveStatus(c);
   const documents = c.documents?.length ? c.documents : DOCUMENT_TEMPLATE.map((d) => ({ ...d, received: false, receivedDate: null }));
   const probation = c.probation ?? {};
   const probationStart = probation.startDate ?? c.process_start_date;
   const daysInProbation = c.current_step === TOTAL_STEPS ? daysBetween(probationStart, today()) : 0;
+  const [docForm, setDocForm] = useState(null); // step number for create/edit form
+  const [docView, setDocView] = useState(null); // step number for view/print
   const hasName = !!c.name?.trim();
   const title = hasName ? c.name : c.position;
   const subtitle = hasName ? `${c.position} · ${c.department}` : `${c.department} · ${c.type === 'replacement' ? 'ทดแทนคนลาออก' : 'อัตราใหม่'}`;
@@ -974,6 +1014,50 @@ function CandidateDetail({ c, onClose, onEdit, onDelete, onAdvance, onApprove, o
           </div>
         )}
       </Section>
+
+      {/* Documents (สร้าง/พิมพ์เอกสารแต่ละ step) */}
+      <Section icon={FileText} title="เอกสาร (Documents)" subtitle="สร้าง · กรอก · พิมพ์/PDF">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+          {Object.keys(DOC_LABELS).map((k) => {
+            const step = Number(k);
+            const info = DOC_LABELS[step];
+            const ported = step === 1; // ฟอร์มที่พอร์ตเข้าระบบจริงแล้ว (เพิ่มทีละ step)
+            const made = !!c.generated_docs?.[step];
+            return (
+              <div key={step} className={`p-3 rounded-lg border ${made ? 'bg-emerald-50 border-emerald-200' : 'bg-white border-slate-200'}`}>
+                <div className="text-[11px] text-slate-400">Step {step}</div>
+                <div className="text-sm font-medium text-slate-800">{info.thai}</div>
+                <div className="text-[11px] text-slate-500 mb-2">{info.name}</div>
+                {!ported ? (
+                  <div className="text-[11px] text-slate-400 italic">กำลังพอร์ตเข้าระบบ (เร็วๆ นี้)</div>
+                ) : made ? (
+                  <div className="flex gap-2">
+                    <button onClick={() => setDocView(step)} className="text-xs bg-slate-900 hover:bg-slate-800 text-white px-2.5 py-1 rounded-lg">👁 ดู/พิมพ์</button>
+                    <button onClick={() => setDocForm(step)} className="text-xs text-slate-600 hover:text-slate-900 border border-slate-300 px-2.5 py-1 rounded-lg">✎ แก้ไข</button>
+                  </div>
+                ) : (
+                  <button onClick={() => setDocForm(step)} className="text-xs bg-emerald-600 hover:bg-emerald-700 text-white px-2.5 py-1 rounded-lg">+ สร้างเอกสาร</button>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </Section>
+
+      {docForm === 1 && (
+        <ManpowerRequestForm
+          initial={c.generated_docs?.[1]?.data ?? null}
+          candidate={c}
+          user={{ name: actor }}
+          onClose={() => setDocForm(null)}
+          onSave={(data, approvers) => { onSaveDoc(1, data, approvers); setDocForm(null); }}
+        />
+      )}
+      {docView === 1 && c.generated_docs?.[1] && (
+        <DocViewer title={DOC_LABELS[1].thai} onClose={() => setDocView(null)}>
+          <ManpowerRequestDoc data={c.generated_docs[1].data} candidate={c} workflow={c.approval_workflows?.[1]} />
+        </DocViewer>
+      )}
 
       {/* Pre-boarding documents (Step 7+) */}
       {c.current_step >= 7 && (
@@ -1086,6 +1170,324 @@ function Modal({ title, subtitle, onClose, wide, children }) {
         </div>
         <div className="p-4 sm:p-5">{children}</div>
       </div>
+    </div>
+  );
+}
+
+// ============================================================================
+// Document components (printable JIANCHA forms)
+// ============================================================================
+
+function JianchaLogo({ size = 64 }) {
+  return <img src="/jiancha-logo.jpg" alt="JIANCHA" style={{ height: size, width: 'auto', display: 'block' }} />;
+}
+
+function DocHeader({ step, candidate }) {
+  const info = DOC_LABELS[step];
+  return (
+    <>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px', borderBottom: '2px solid #0f172a', paddingBottom: '10px', marginBottom: '8px' }}>
+        <JianchaLogo size={64} />
+        <div style={{ textAlign: 'right', flex: 1 }}>
+          <h1 style={{ margin: 0 }}>{info.thai}</h1>
+          <div className="form-title-en">{info.name}</div>
+        </div>
+      </div>
+      {candidate && (
+        <div style={{ background: '#f1f5f9', border: '1px solid #cbd5e1', borderRadius: '4px', padding: '8px 12px', marginBottom: '12px', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+          <span style={{ color: '#475569', fontSize: '10px', fontWeight: 600 }}>เกี่ยวกับ:</span>
+          <span style={{ fontWeight: 700 }}>{candidate.name || candidate.position}</span>
+          {candidate.name && <span style={{ color: '#475569' }}>· ตำแหน่ง <b>{candidate.position}</b></span>}
+          <span style={{ color: '#475569' }}>· แผนก <b>{candidate.department}</b></span>
+          <span style={{ color: '#64748b' }}>· {candidate.type === 'replacement' ? 'ทดแทนคนลาออก' : 'อัตราใหม่'}</span>
+        </div>
+      )}
+    </>
+  );
+}
+
+function Cb({ checked, label }) {
+  return (
+    <span className="check-item"><span className={`checkbox ${checked ? 'checked' : ''}`}></span><span>{label}</span></span>
+  );
+}
+
+function SignatureBlocks({ labels, workflow }) {
+  const useWf = workflow?.approvers?.length > 0;
+  const items = useWf
+    ? workflow.approvers.map((a) => ({ label: a.role, sublabel: 'Approver', approver: a }))
+    : labels.map((l) => ({ label: l.th, sublabel: l.en, approver: null }));
+  const cols = Math.min(items.length || 1, 4);
+  return (
+    <div className="sig-grid" style={{ gridTemplateColumns: `repeat(${cols}, 1fr)` }}>
+      {items.map((it, i) => (
+        <div key={i} className="sig-box">
+          <div className="sig-label">{it.label}</div>
+          <div className="sig-label-en">{it.sublabel}</div>
+          {it.approver?.status === 'approved' && it.approver.signature_data ? (
+            <div style={{ marginTop: 'auto', textAlign: 'center' }}>
+              <img src={it.approver.signature_data} alt="signature" style={{ height: '34px', maxWidth: '95%', margin: '0 auto', display: 'block' }} />
+              <div className="sig-line">({it.approver.name})<br />{it.approver.role}<br />✓ ลงนาม {fmtDate(it.approver.signedAt)}</div>
+            </div>
+          ) : it.approver ? (
+            <div className="sig-line">
+              {it.approver.status === 'approved' ? '✓ อนุมัติแล้ว' : it.approver.status === 'pending' ? '⏳ รอลงนาม' : '○ รอคิว'}<br />
+              ({it.approver.name})<br />{it.approver.role}
+            </div>
+          ) : (
+            <div className="sig-line">ลงชื่อ ...........................<br />(...........................)<br />วันที่ ___ / ___ / ______</div>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ApproverList({ approvers, setApprovers, label }) {
+  const set = (i, k, v) => setApprovers(approvers.map((a, j) => j === i ? { ...a, [k]: v } : a));
+  const add = () => setApprovers([...approvers, { name: '', email: '', role: '' }]);
+  const rm = (i) => setApprovers(approvers.filter((_, j) => j !== i));
+  return (
+    <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 space-y-2">
+      <div className="flex items-center justify-between">
+        <div className="text-xs font-semibold text-slate-700">{label} (เซ็นตามลำดับ)</div>
+        <button type="button" onClick={add} className="text-xs px-2 py-1 rounded bg-slate-700 hover:bg-slate-800 text-white">+ เพิ่มผู้อนุมัติ</button>
+      </div>
+      {approvers.map((a, i) => (
+        <div key={i} className="flex items-center gap-2">
+          <span className="text-xs text-slate-400 w-4 text-center">{i + 1}</span>
+          <input className="input text-xs flex-1" placeholder="ชื่อ-นามสกุล" value={a.name} onChange={(e) => set(i, 'name', e.target.value)} />
+          <input className="input text-xs flex-1" placeholder="email" value={a.email} onChange={(e) => set(i, 'email', e.target.value)} />
+          <input className="input text-xs flex-1" placeholder="ตำแหน่ง/บทบาท" value={a.role} onChange={(e) => set(i, 'role', e.target.value)} />
+          <button type="button" onClick={() => rm(i)} className="text-rose-500 hover:text-rose-700 text-sm px-1">✕</button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function DocViewer({ title, onClose, children }) {
+  return (
+    <div className="fixed inset-0 z-50 bg-slate-900/40 overflow-y-auto p-2 sm:p-6" onClick={onClose}>
+      <div className="bg-white rounded-2xl shadow-xl border border-slate-200 w-full max-w-3xl mx-auto my-4" onClick={(e) => e.stopPropagation()}>
+        <div className="no-print flex items-center justify-between p-3 border-b border-slate-100 sticky top-0 bg-white rounded-t-2xl z-10">
+          <div className="text-sm font-semibold text-slate-900 truncate">{title}</div>
+          <div className="flex gap-2">
+            <button onClick={() => window.print()} className="text-xs bg-slate-900 hover:bg-slate-800 text-white px-3 py-1.5 rounded-lg">🖨 พิมพ์ / PDF</button>
+            <button onClick={onClose} className="text-xs text-slate-500 hover:text-slate-900 px-2 py-1.5">ปิด</button>
+          </div>
+        </div>
+        <div className="p-4 sm:p-6 print-area">{children}</div>
+      </div>
+    </div>
+  );
+}
+
+// ===== Step 1: Manpower Requisition Form =====
+function ManpowerRequestForm({ initial, candidate, user, onClose, onSave }) {
+  const [form, setForm] = useState(initial ?? {
+    proposed_date: todayISO(),
+    division: candidate.department,
+    level: 'JG5',
+    jd: '',
+    gender: 'ไม่ระบุ',
+    age_min: 25,
+    age_max: 35,
+    experience_required: 'required',
+    experience_years: 3,
+    education: ['ปริญญาตรี'],
+    additional: '',
+    reason_type: 'new_plan',
+    replace_name: '',
+    replace_reason: 'ลาออก',
+    employment_type: 'monthly',
+    contract_months: 12,
+    necessities: ['เพิ่มกำลังคนเพื่อรองรับงานที่เพิ่มขึ้น'],
+    proposer_name: user?.name ?? '',
+    proposer_position: '',
+    proposer_division: candidate.department,
+    hr_received_date: '',
+    hr_duration: '30',
+    hr_recruiter_name: user?.name ?? '',
+    hr_recruiter_position: 'HR Recruiter'
+  });
+  const [approvers, setApprovers] = useState(() =>
+    (initial?._approvers) ?? [
+      { name: '', email: '', role: 'หัวหน้าต้นสังกัด' },
+      { name: '', email: '', role: 'HR Manager / Director' },
+      { name: '', email: '', role: 'MD / CEO' }
+    ]
+  );
+  const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
+  const toggleArr = (k, v) => setForm((f) => ({ ...f, [k]: f[k].includes(v) ? f[k].filter((x) => x !== v) : [...f[k], v] }));
+  const submit = (e) => {
+    e.preventDefault();
+    if (!form.jd.trim()) { alert('กรุณากรอกหน้าที่และความรับผิดชอบ'); return; }
+    if (form.age_min !== '' && form.age_max !== '' && Number(form.age_min) > Number(form.age_max)) { alert('อายุต่ำสุดต้องน้อยกว่าหรือเท่ากับอายุสูงสุด'); return; }
+    if (!approvers.every((a) => a.name && a.email)) { alert('กรุณากรอกชื่อ + อีเมลผู้อนุมัติให้ครบทุกคน (หรือลบคนที่ไม่ใช้)'); return; }
+    onSave({ ...form, _approvers: approvers }, approvers);
+  };
+  return (
+    <Modal title="สร้าง Manpower Requisition Form" subtitle={`Step 1 · ${candidate.position} · ${candidate.department}`} onClose={onClose} wide>
+      <form onSubmit={submit} className="space-y-3">
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="วันที่เสนอขอ"><input type="date" className="input" value={form.proposed_date} onChange={(e) => set('proposed_date', e.target.value)} /></Field>
+          <Field label="ฝ่าย (Division)"><input className="input" value={form.division} onChange={(e) => set('division', e.target.value)} /></Field>
+        </div>
+        <Field label="เกรด/ระดับ" required>
+          <select className="input" value={form.level} onChange={(e) => set('level', e.target.value)}>
+            {LEVELS.map((l) => <option key={l.code} value={l.code}>{l.code} ({l.label})</option>)}
+          </select>
+        </Field>
+        <Field label="หน้าที่และความรับผิดชอบ (JD เบื้องต้น)" required>
+          <textarea rows={5} className="input" value={form.jd} onChange={(e) => set('jd', e.target.value)} placeholder="เขียน JD เป็นข้อ ๆ หรือเป็นย่อหน้า" />
+        </Field>
+        <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 space-y-2">
+          <div className="text-xs font-semibold text-slate-700">คุณสมบัติผู้สมัคร</div>
+          <div className="grid grid-cols-3 gap-3">
+            <Field label="เพศ">
+              <select className="input" value={form.gender} onChange={(e) => set('gender', e.target.value)}><option>ไม่ระบุ</option><option>ชาย</option><option>หญิง</option></select>
+            </Field>
+            <Field label="อายุ (ปี)">
+              <div className="flex items-center gap-1">
+                <input type="number" min="15" max="80" className="input text-center" placeholder="ต่ำ" value={form.age_min} onChange={(e) => set('age_min', e.target.value ? Number(e.target.value) : '')} />
+                <span className="text-slate-400">–</span>
+                <input type="number" min="15" max="80" className="input text-center" placeholder="สูง" value={form.age_max} onChange={(e) => set('age_max', e.target.value ? Number(e.target.value) : '')} />
+              </div>
+            </Field>
+            <Field label="ประสบการณ์">
+              <select className="input" value={form.experience_required} onChange={(e) => set('experience_required', e.target.value)}><option value="not_required">ไม่จำเป็น</option><option value="required">มีประสบการณ์</option></select>
+            </Field>
+          </div>
+          {form.experience_required === 'required' && (
+            <Field label="ประสบการณ์อย่างน้อย (ปี)"><input type="number" min="0" className="input" value={form.experience_years} onChange={(e) => set('experience_years', Number(e.target.value))} /></Field>
+          )}
+          <Field label="วุฒิการศึกษา (เลือกได้หลายข้อ)">
+            <div className="flex flex-wrap gap-2 text-xs">
+              {['ต่ำกว่า ม.6 / ปวช.', 'ปวส.', 'ปริญญาตรี', 'ปริญญาโท'].map((e) => (
+                <label key={e} className={`px-2 py-1 rounded border cursor-pointer ${form.education.includes(e) ? 'bg-emerald-100 border-emerald-300 text-emerald-800' : 'bg-white border-slate-300 text-slate-600'}`}>
+                  <input type="checkbox" className="mr-1" checked={form.education.includes(e)} onChange={() => toggleArr('education', e)} />{e}
+                </label>
+              ))}
+            </div>
+          </Field>
+        </div>
+        <Field label="รายละเอียดเพิ่มเติม (คุณสมบัติพิเศษ)">
+          <textarea rows={3} className="input" value={form.additional} onChange={(e) => set('additional', e.target.value)} placeholder="เช่น ใช้ภาษาอังกฤษได้ดี · มี certification เฉพาะ" />
+        </Field>
+        <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 space-y-2">
+          <div className="text-xs font-semibold text-slate-700">เหตุผลการขอว่าจ้าง</div>
+          <div className="space-y-2 text-sm">
+            <label className="flex items-center gap-2"><input type="radio" name="rt" checked={form.reason_type === 'new_plan'} onChange={() => set('reason_type', 'new_plan')} /> อัตราใหม่ ตามแผนอัตรากำลังคนประจำปี</label>
+            <label className="flex items-center gap-2"><input type="radio" name="rt" checked={form.reason_type === 'new_unplanned'} onChange={() => set('reason_type', 'new_unplanned')} /> อัตราใหม่ นอกแผน</label>
+            <label className="flex items-center gap-2"><input type="radio" name="rt" checked={form.reason_type === 'replace'} onChange={() => set('reason_type', 'replace')} /> เพื่อทดแทน</label>
+            {form.reason_type === 'replace' && (
+              <div className="grid grid-cols-2 gap-2 ml-6">
+                <input className="input" placeholder="ชื่อ-นามสกุล" value={form.replace_name} onChange={(e) => set('replace_name', e.target.value)} />
+                <select className="input" value={form.replace_reason} onChange={(e) => set('replace_reason', e.target.value)}><option>ลาออก</option><option>ไม่ผ่านทดลองงาน</option><option>โยกย้าย/เกษียณ</option></select>
+              </div>
+            )}
+          </div>
+        </div>
+        <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 space-y-2">
+          <div className="text-xs font-semibold text-slate-700">ลักษณะการจ้างงาน</div>
+          <div className="space-y-2 text-sm">
+            <label className="flex items-center gap-2"><input type="radio" name="et" checked={form.employment_type === 'monthly'} onChange={() => set('employment_type', 'monthly')} /> พนักงานรายเดือน</label>
+            <label className="flex items-center gap-2"><input type="radio" name="et" checked={form.employment_type === 'daily'} onChange={() => set('employment_type', 'daily')} /> พนักงานรายวัน</label>
+            <label className="flex items-center gap-2"><input type="radio" name="et" checked={form.employment_type === 'contract'} onChange={() => set('employment_type', 'contract')} /> พนักงานรายสัญญาจ้าง</label>
+            {form.employment_type === 'contract' && (
+              <div className="ml-6"><input type="number" min="1" className="input" style={{ maxWidth: 120 }} value={form.contract_months} onChange={(e) => set('contract_months', Number(e.target.value))} /> เดือน</div>
+            )}
+          </div>
+        </div>
+        <Field label="ความจำเป็นการขอว่าจ้าง (เลือกได้มากกว่า 1)">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-1 text-xs">
+            {NECESSITY_OPTIONS.map((n) => (
+              <label key={n} className={`p-2 rounded border cursor-pointer ${form.necessities.includes(n) ? 'bg-emerald-100 border-emerald-300 text-emerald-800' : 'bg-white border-slate-200 text-slate-600'}`}>
+                <input type="checkbox" className="mr-1" checked={form.necessities.includes(n)} onChange={() => toggleArr('necessities', n)} />{n}
+              </label>
+            ))}
+          </div>
+        </Field>
+        <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 space-y-2">
+          <div className="text-xs font-semibold text-slate-700">ผู้เสนอขอ (Proposer)</div>
+          <div className="grid grid-cols-3 gap-2">
+            <input className="input" placeholder="ชื่อ-นามสกุล" value={form.proposer_name} onChange={(e) => set('proposer_name', e.target.value)} />
+            <input className="input" placeholder="ตำแหน่ง" value={form.proposer_position} onChange={(e) => set('proposer_position', e.target.value)} />
+            <input className="input" placeholder="ฝ่าย" value={form.proposer_division} onChange={(e) => set('proposer_division', e.target.value)} />
+          </div>
+        </div>
+        <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-3 space-y-2">
+          <div className="text-xs font-semibold text-indigo-800">ส่วนที่ 2 : สำหรับฝ่ายบริหารทรัพยากรบุคคล (HR กรอก)</div>
+          <div className="grid grid-cols-2 gap-2">
+            <Field label="วันที่รับแบบขออัตรากำลังคน"><input type="date" className="input" value={form.hr_received_date} onChange={(e) => set('hr_received_date', e.target.value)} /></Field>
+            <Field label="ระยะเวลาการสรรหา">
+              <select className="input" value={form.hr_duration} onChange={(e) => set('hr_duration', e.target.value)}><option value="30">ภายใน 30 วัน</option><option value="45">ภายใน 45 วัน</option><option value="60">ภายใน 60 วัน</option></select>
+            </Field>
+            <Field label="ชื่อผู้รับผิดชอบการสรรหา"><input className="input" value={form.hr_recruiter_name} onChange={(e) => set('hr_recruiter_name', e.target.value)} placeholder="ชื่อ-นามสกุล" /></Field>
+            <Field label="ตำแหน่ง"><input className="input" value={form.hr_recruiter_position} onChange={(e) => set('hr_recruiter_position', e.target.value)} placeholder="เช่น HR Recruiter" /></Field>
+          </div>
+        </div>
+        <ApproverList approvers={approvers} setApprovers={setApprovers} label="ผู้อนุมัติเปิดอัตรา" />
+        <div className="flex justify-end gap-2 pt-2">
+          <button type="button" onClick={onClose} className="px-3 py-2 text-sm text-slate-600 hover:text-slate-900">ยกเลิก</button>
+          <button type="submit" className="px-4 py-2 text-sm bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg">บันทึกเอกสาร + ส่งอนุมัติ</button>
+        </div>
+      </form>
+      <style>{`.input{ width:100%; border:1px solid #e2e8f0; border-radius:0.5rem; padding:0.5rem 0.75rem; font-size:0.875rem; background:white;} .input:focus{ outline:none; box-shadow:0 0 0 2px #cbd5e1;}`}</style>
+    </Modal>
+  );
+}
+
+function ManpowerRequestDoc({ data, candidate, workflow }) {
+  const levelObj = LEVELS.find((l) => l.code === data.level) ?? { code: data.level, label: '' };
+  const edu = data.education ?? [];
+  const nec = data.necessities ?? [];
+  return (
+    <div className="print-document">
+      <DocHeader step={1} candidate={candidate} />
+      <div className="section-bar">ส่วนที่ 1 : สำหรับต้นสังกัดกรอกรายละเอียด</div>
+      <table className="form-table"><tbody>
+        <tr><td className="lbl" style={{ width: '15%' }}>ตำแหน่ง</td><td className="val" style={{ width: '35%' }}><b>{candidate.position}</b></td>
+            <td className="lbl" style={{ width: '15%' }}>วันที่เสนอขอ</td><td className="val" style={{ width: '35%' }}>{fmtDate(data.proposed_date)}</td></tr>
+        <tr><td className="lbl">แผนก</td><td className="val">{candidate.department}</td><td className="lbl">ฝ่าย</td><td className="val">{data.division}</td></tr>
+        <tr><td className="lbl">เกรด/ระดับ</td><td className="val" colSpan="3"><b>{levelObj.code}</b> ({levelObj.label})</td></tr>
+      </tbody></table>
+      <div className="section-bar" style={{ marginTop: '12px' }}>หน้าที่และความรับผิดชอบ (JD เบื้องต้น)</div>
+      <div style={{ border: '1px solid #94a3b8', borderTop: 'none', padding: '10px', whiteSpace: 'pre-wrap', fontSize: '11px', minHeight: '100px' }}>{data.jd}</div>
+      <div className="section-bar" style={{ marginTop: '12px' }}>คุณสมบัติ</div>
+      <table className="form-table"><tbody>
+        <tr><td className="lbl">เพศ</td><td className="val">{data.gender}</td><td className="lbl">อายุ</td><td className="val">{data.age_min && data.age_max ? `${data.age_min} – ${data.age_max} ปี` : '—'}</td></tr>
+        <tr><td className="lbl">ประสบการณ์ทำงาน</td><td className="val" colSpan="3">{data.experience_required === 'not_required' ? 'ไม่จำเป็น' : `${data.experience_years} ปีขึ้นไป`}</td></tr>
+        <tr><td className="lbl">วุฒิการศึกษา</td><td className="val" colSpan="3">{['ต่ำกว่า ม.6 / ปวช.', 'ปวส.', 'ปริญญาตรี', 'ปริญญาโท'].map((e) => <span key={e} style={{ marginRight: '14px' }}><Cb checked={edu.includes(e)} label={e} /></span>)}</td></tr>
+        <tr><td className="lbl">รายละเอียดเพิ่มเติม</td><td className="val" colSpan="3" style={{ whiteSpace: 'pre-wrap' }}>{data.additional || '—'}</td></tr>
+      </tbody></table>
+      <div className="section-bar" style={{ marginTop: '12px' }}>เหตุผลการขอว่าจ้าง / ลักษณะการจ้างงาน</div>
+      <div className="check-grid">
+        <Cb checked={data.reason_type === 'new_plan'} label="อัตราใหม่ ตามแผนอัตรากำลังคนประจำปี" />
+        <Cb checked={data.employment_type === 'monthly'} label="พนักงานรายเดือน" />
+        <Cb checked={data.reason_type === 'new_unplanned'} label="อัตราใหม่ นอกแผน" />
+        <Cb checked={data.employment_type === 'daily'} label="พนักงานรายวัน" />
+        <Cb checked={data.reason_type === 'replace'} label={`เพื่อทดแทน ${data.reason_type === 'replace' ? `(${data.replace_name} · ${data.replace_reason})` : ''}`} />
+        <Cb checked={data.employment_type === 'contract'} label={`พนักงานรายสัญญาจ้าง ${data.employment_type === 'contract' ? `(${data.contract_months} เดือน)` : ''}`} />
+      </div>
+      <div className="section-bar" style={{ marginTop: '12px' }}>ความจำเป็นการขอว่าจ้าง</div>
+      <div className="check-grid">{NECESSITY_OPTIONS.map((n) => <Cb key={n} checked={nec.includes(n)} label={n} />)}</div>
+      <table className="form-table" style={{ marginTop: '12px' }}><tbody>
+        <tr><td className="lbl" style={{ width: '15%' }}>ผู้เสนอขอ</td><td className="val" style={{ width: '35%' }}>{data.proposer_name}</td>
+            <td className="lbl" style={{ width: '15%' }}>ตำแหน่ง</td><td className="val" style={{ width: '35%' }}>{data.proposer_position} · {data.proposer_division}</td></tr>
+      </tbody></table>
+      <div className="section-bar" style={{ marginTop: '18px' }}>ส่วนที่ 2 : สำหรับฝ่ายบริหารทรัพยากรบุคคล</div>
+      <table className="form-table"><tbody>
+        <tr><td className="lbl" style={{ width: '25%' }}>วันที่รับแบบขออัตรากำลังคน</td><td className="val">{data.hr_received_date ? fmtDate(data.hr_received_date) : '_____ / _____ / _________'}</td>
+            <td className="lbl" style={{ width: '15%' }}>ระยะเวลาการสรรหา</td><td className="val"><Cb checked={data.hr_duration === '30'} label="30 วัน" /> &nbsp; <Cb checked={data.hr_duration === '45'} label="45 วัน" /> &nbsp; <Cb checked={data.hr_duration === '60'} label="60 วัน" /></td></tr>
+        <tr><td className="lbl">ชื่อผู้รับผิดชอบการสรรหา</td><td className="val">{data.hr_recruiter_name || '...........................'}</td><td className="lbl">ตำแหน่ง</td><td className="val">{data.hr_recruiter_position || '...........................'}</td></tr>
+      </tbody></table>
+      <div className="section-bar" style={{ marginTop: '14px' }}>ส่วนที่ 3 : สำหรับฝ่ายบริหารพิจารณาอนุมัติ</div>
+      <SignatureBlocks
+        labels={[{ th: 'ต้นสังกัด', en: 'Requested by' }, { th: 'ผู้ตรวจสอบ (HR)', en: 'Verified by' }, { th: 'ผู้พิจารณา', en: 'Reviewed by' }, { th: 'ผู้อนุมัติ', en: 'Approved by' }]}
+        workflow={workflow}
+      />
     </div>
   );
 }

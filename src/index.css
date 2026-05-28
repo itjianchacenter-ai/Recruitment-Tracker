@@ -16,3 +16,37 @@ body {
   color: #111827;
   -webkit-font-smoothing: antialiased;
 }
+
+/* shared form input */
+.input { width: 100%; border: 1px solid #e2e8f0; border-radius: 0.5rem; padding: 0.5rem 0.75rem; font-size: 0.875rem; background: #fff; }
+.input:focus { outline: none; box-shadow: 0 0 0 2px #cbd5e1; }
+
+/* ===== Printable document styles (JIANCHA forms) ===== */
+.print-document { font-family: 'IBM Plex Sans Thai', 'Sarabun', serif; line-height: 1.5; color: #0f172a; font-size: 12px; }
+.print-document h1 { font-size: 18px; font-weight: 700; margin-bottom: 2px; }
+.print-document .form-title-en { font-size: 11px; color: #475569; font-weight: 500; }
+.print-document .section-bar { background: #3D4F2D; color: #fff; padding: 6px 10px; font-weight: 600; font-size: 12px; margin-top: 14px; margin-bottom: 0; }
+.print-document .form-table { width: 100%; border-collapse: collapse; border: 1px solid #94a3b8; }
+.print-document .form-table td { border: 1px solid #94a3b8; padding: 6px 10px; vertical-align: top; }
+.print-document .form-table td.lbl { background: #f1f5f9; color: #334155; font-weight: 500; white-space: nowrap; }
+.print-document .form-table td.val { color: #0f172a; }
+.print-document .check-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 16px; padding: 8px 10px; border: 1px solid #94a3b8; border-top: none; }
+.print-document .check-item { font-size: 11px; display: inline-flex; align-items: center; gap: 4px; }
+.print-document .checkbox { display: inline-block; width: 11px; height: 11px; border: 1px solid #475569; vertical-align: middle; margin-right: 4px; position: relative; }
+.print-document .checkbox.checked { background: #3D4F2D; }
+.print-document .checkbox.checked::after { content: '✓'; color: #fff; font-size: 9px; position: absolute; top: -3px; left: 1px; }
+.print-document .sig-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0; margin-top: 10px; border: 1px solid #94a3b8; }
+.print-document .sig-box { padding: 10px; border-right: 1px solid #94a3b8; min-height: 110px; display: flex; flex-direction: column; }
+.print-document .sig-box:last-child { border-right: none; }
+.print-document .sig-label { font-size: 11px; font-weight: 600; text-align: center; margin-bottom: 4px; }
+.print-document .sig-label-en { font-size: 9px; color: #64748b; text-align: center; margin-bottom: 24px; }
+.print-document .sig-line { border-top: 1px solid #475569; padding-top: 4px; text-align: center; font-size: 10px; color: #64748b; margin-top: auto; }
+
+@media print {
+  body { background: #fff; }
+  body * { visibility: hidden; }
+  .print-area, .print-area * { visibility: visible; }
+  .print-area { position: absolute; left: 0; top: 0; width: 100%; padding: 0 !important; }
+  .no-print { display: none !important; }
+  .print-document { box-shadow: none !important; border: none !important; }
+}
