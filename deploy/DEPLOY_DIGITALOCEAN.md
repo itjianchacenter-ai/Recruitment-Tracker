@@ -91,7 +91,19 @@ sudo rm -rf /var/www/recruitment/dist
 sudo cp -r dist /var/www/recruitment/dist
 ```
 
-## ขั้นที่ 5 — nginx
+## ขั้นที่ 5 — Web server
+
+### 🅰️ ถ้าเซิร์ฟเวอร์รัน **Caddy** อยู่แล้ว (แนะนำ — ตรวจพบว่าเครื่องนี้ใช้ Caddy)
+Caddy ออก HTTPS ให้อัตโนมัติ — ไม่ต้องใช้ certbot (ข้ามขั้นที่ 6 ได้):
+```bash
+# เพิ่ม (ไม่ทับ) site block เข้า Caddyfile เดิม
+sudo bash -c 'cat /opt/recruitment/deploy/Caddyfile-recruitment >> /etc/caddy/Caddyfile'
+sudo caddy validate --config /etc/caddy/Caddyfile   # ตรวจ syntax
+sudo systemctl reload caddy
+```
+> เปิด `https://recruitment.jchr-global.com` ได้เลย (Caddy จะขอ cert เองครั้งแรก รอ ~10–30 วิ) — **ข้ามขั้นที่ 6**
+
+### 🅱️ ถ้าใช้ **nginx**
 ```bash
 # คัดลอก config (อยู่ในโฟลเดอร์ deploy/ ของ repo)
 sudo cp /opt/recruitment/deploy/nginx-recruitment.conf /etc/nginx/sites-available/recruitment.jchr-global.com

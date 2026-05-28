@@ -1,0 +1,32 @@
+# =====================================================================
+# Caddy site block — recruitment.jchr-global.com
+# เซิร์ฟเวอร์รัน Caddy อยู่แล้ว → "เพิ่ม" บล็อกนี้เข้า Caddyfile (อย่าทับของเดิม)
+#
+# ตำแหน่ง Caddyfile ปกติ: /etc/caddy/Caddyfile
+# เพิ่มบล็อกนี้ต่อท้าย แล้ว: sudo systemctl reload caddy
+# Caddy จะขอ/ต่ออายุใบรับรอง HTTPS (Let's Encrypt) ให้อัตโนมัติ
+# (ต้องเปิดพอร์ต 80 + 443 และ DNS ของ subdomain ชี้มาที่เครื่องนี้ — DNS only)
+# =====================================================================
+
+recruitment.jchr-global.com {
+    # โฟลเดอร์ build ของ frontend (Vite -> dist)
+    root * /var/www/recruitment/dist
+
+    encode gzip zstd
+
+    # SPA: ทุก path ที่ไม่ใช่ไฟล์จริง -> index.html
+    try_files {path} /index.html
+    file_server
+
+    # security headers
+    header {
+        X-Frame-Options "SAMEORIGIN"
+        X-Content-Type-Options "nosniff"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        -Server
+    }
+
+    # cache asset ที่มี hash (Vite ใส่ hash ให้)
+    @assets path /assets/*
+    header @assets Cache-Control "public, max-age=31536000, immutable"
+}
