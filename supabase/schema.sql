@@ -68,7 +68,7 @@ create trigger trg_candidates_updated_at
 -- 5. Lightweight audit log (optional but recommended) ----------------------
 create table if not exists public.candidate_audit (
   id           bigserial     primary key,
-  candidate_id uuid          references public.candidates(id) on delete cascade,
+  candidate_id uuid,                                       -- no FK: audit must survive candidate deletion (immutable trail)
   action       text          not null,                  -- insert | update | delete
   actor        text,                                    -- HR member name
   diff         jsonb,                                   -- new row snapshot (for update/insert)

@@ -1,0 +1,11 @@
+-- =====================================================================
+-- FIX: "ยกเลิกตำแหน่ง / ลบ candidate" ไม่ได้
+-- สาเหตุ: ตาราง candidate_audit มี foreign key (candidate_id) แบบ ON DELETE
+-- CASCADE. เมื่อลบ candidate, trigger จะเขียน audit row (action='delete')
+-- ที่อ้างถึง id ของ candidate ที่เพิ่งถูกลบ → ผิด FK → การลบล้มเหลว.
+-- วิธีแก้: ตัด FK ออก เพื่อให้ audit log เป็นอิสระ (และเก็บประวัติไว้แม้ลบ
+-- candidate แล้ว — ดีต่อ audit trail ระดับ IPO ด้วย)
+--
+-- รันใน Supabase → SQL Editor → Run  (ทำได้เลย ไม่ต้องรอ redeploy)
+-- =====================================================================
+alter table public.candidate_audit drop constraint if exists candidate_audit_candidate_id_fkey;

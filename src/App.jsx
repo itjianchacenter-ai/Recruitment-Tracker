@@ -232,8 +232,11 @@ export default function App() {
 
   async function handleDelete(id) {
     if (!confirm('ลบ candidate รายนี้ใช่หรือไม่? (ลบแล้วกู้คืนได้จาก audit log)')) return;
-    try { await deleteCandidate(id); setOpening(null); }
-    catch (e) { alert('ลบไม่สำเร็จ: ' + e.message); }
+    try {
+      await deleteCandidate(id);
+      setCandidates((prev) => prev.filter((x) => x.id !== id)); // อัปเดตทันที (ไม่รอ realtime)
+      setOpening(null);
+    } catch (e) { alert('ลบไม่สำเร็จ: ' + e.message); }
   }
 
   async function advanceStep(c) {
@@ -299,8 +302,11 @@ export default function App() {
 
   async function cancelPosition(c) {
     if (!confirm(`ยกเลิกตำแหน่ง "${c.position}"?\n\nตำแหน่งจะหายจาก dashboard (audit log เก็บประวัติไว้)`)) return;
-    try { await deleteCandidate(c.id); }
-    catch (e) { alert('ยกเลิกไม่สำเร็จ: ' + e.message); }
+    try {
+      await deleteCandidate(c.id);
+      setCandidates((prev) => prev.filter((x) => x.id !== c.id)); // อัปเดตทันที (ไม่รอ realtime DELETE)
+      setOpening(null);
+    } catch (e) { alert('ยกเลิกไม่สำเร็จ: ' + e.message); }
   }
 
   async function toggleDoc(c, key) {
