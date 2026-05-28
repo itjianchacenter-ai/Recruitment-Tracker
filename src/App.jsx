@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, Fragment } from 'react';
 import {
   Plus, Search, Users, CheckCircle2, AlertTriangle, AlertCircle, ClipboardCheck,
   X, ChevronRight, Calendar, Trash2, Edit2, FileText, FileCheck, Briefcase,
@@ -69,6 +69,58 @@ const DOC_LABELS = {
   6: { name: 'Employee Recruitment Approval Form', thai: 'แบบฟอร์มขออนุมัติรับพนักงาน' },
   8: { name: 'Probation Evaluation Form',          thai: 'แบบฟอร์มประเมินผลการทดลองงาน' }
 };
+
+// Step 5 — interview evaluation criteria + score definitions
+const EVAL_CRITERIA = [
+  { cat: '1. ด้านความพร้อมของผู้สมัคร', items: [
+    { key: 'a1', label: 'ความเหมาะสมด้านบุคลิกภาพในตำแหน่งงาน' },
+    { key: 'a2', label: 'ตรงต่อเวลาในการสัมภาษณ์งาน' }
+  ] },
+  { cat: '2. ทักษะการตอบคำถาม', items: [
+    { key: 'b1', label: 'ความสามารถในการให้คำตอบตรงประเด็นกับคำถาม' },
+    { key: 'b2', label: 'ความมั่นใจในการตอบคำถาม' },
+    { key: 'b3', label: 'ความสามารถในการเข้าใจคำถาม' },
+    { key: 'b4', label: 'ความสุภาพและทักษะในการสื่อสารอย่างมืออาชีพ' },
+    { key: 'b5', label: 'ความรอบรู้และความเชี่ยวชาญในการตอบคำถาม' },
+    { key: 'b6', label: 'การแสดงทัศนคติต่อลักษณะงานหรือตำแหน่งงาน' }
+  ] },
+  { cat: '3. ทักษะการเป็นผู้นำในระดับตำแหน่งงาน', items: [
+    { key: 'c1', label: 'ความสามารถในการกำหนดวิสัยทัศน์และเป้าหมาย' },
+    { key: 'c2', label: 'ความสามารถในการแก้ไขความขัดแย้งและสร้างความเข้าใจ' },
+    { key: 'c3', label: 'ความสามารถด้านการสร้างวัฒนธรรมทีม' }
+  ] },
+  { cat: '4. ความรู้และความเข้าใจในตำแหน่งงาน', items: [
+    { key: 'd1', label: 'ความรู้และเทคนิคและความเชี่ยวชาญเฉพาะด้าน' },
+    { key: 'd2', label: 'ความเข้าใจองค์ประกอบของงานและกระบวนการทำงาน' },
+    { key: 'd3', label: 'ความรู้ด้านการแก้ไขปัญหาในตำแหน่งงาน' }
+  ] }
+];
+const SCORE_DEFS = [
+  { n: 5, label: 'ยอดเยี่ยม', desc: 'เหนือกว่าความคาดหวัง · ผลลัพธ์โดดเด่น' },
+  { n: 4, label: 'ดีมาก', desc: 'เหนือกว่ามาตรฐาน · รับมือความท้าทายได้ดี' },
+  { n: 3, label: 'มาตรฐาน', desc: 'ระดับคาดหวัง · ทำงานได้ตามเกณฑ์' },
+  { n: 2, label: 'พอใช้', desc: 'มีพื้นฐาน · ต้องพัฒนาเพิ่ม' },
+  { n: 1, label: 'น้อยมาก', desc: 'ขาดความรู้/ทักษะ · ตอบสนองพื้นฐานไม่ได้' }
+];
+
+// Step 8 — probation evaluation criteria
+const PROB_CRITERIA = [
+  { section: '1. เรื่องเวลาการเข้างาน (Time & Attendance)', items: [
+    { key: 't1', label: 'ตรงต่อเวลาในการมาทำงาน · ไม่มาสาย' },
+    { key: 't2', label: 'จำนวนวันลา/ขาด อยู่ในระดับยอมรับได้' },
+    { key: 't3', label: 'ปฏิบัติตามเวลาพักและเลิกงาน' },
+    { key: 't4', label: 'แจ้งล่วงหน้าเมื่อต้องลา' }
+  ] },
+  { section: '2. เรื่องการทำงาน (Work Performance)', items: [
+    { key: 'w1', label: 'ความรู้และทักษะตามตำแหน่ง' },
+    { key: 'w2', label: 'คุณภาพงาน · ความถูกต้องและละเอียดรอบคอบ' },
+    { key: 'w3', label: 'ปริมาณงานที่ทำได้ในแต่ละช่วงเวลา' },
+    { key: 'w4', label: 'การทำงานร่วมกับทีม · มนุษยสัมพันธ์' },
+    { key: 'w5', label: 'ความรับผิดชอบและความน่าเชื่อถือ' },
+    { key: 'w6', label: 'ทัศนคติต่อการทำงานและองค์กร' },
+    { key: 'w7', label: 'ความสามารถในการเรียนรู้และพัฒนาตัวเอง' }
+  ] }
+];
 
 const HR_EMAIL = 'Hr.jc@jianchatea.com';
 const STEP_2_DEADLINE_DAYS = 30;
@@ -1027,7 +1079,7 @@ function CandidateDetail({ c, onClose, onEdit, onDelete, onAdvance, onApprove, o
           {Object.keys(DOC_LABELS).map((k) => {
             const step = Number(k);
             const info = DOC_LABELS[step];
-            const ported = [1, 6].includes(step); // ฟอร์มที่พอร์ตเข้าระบบจริงแล้ว (เพิ่มทีละ step)
+            const ported = [1, 5, 6, 8].includes(step); // เอกสารที่พอร์ตเข้าระบบจริงแล้วครบ
             const made = !!c.generated_docs?.[step];
             return (
               <div key={step} className={`p-3 rounded-lg border ${made ? 'bg-emerald-50 border-emerald-200' : 'bg-white border-slate-200'}`}>
@@ -1076,6 +1128,24 @@ function CandidateDetail({ c, onClose, onEdit, onDelete, onAdvance, onApprove, o
       {docView === 6 && c.generated_docs?.[6] && (
         <DocViewer title={DOC_LABELS[6].thai} onClose={() => setDocView(null)}>
           <ApprovalDoc data={c.generated_docs[6].data} candidate={c} workflow={c.approval_workflows?.[6]} />
+        </DocViewer>
+      )}
+      {docForm === 5 && (
+        <ScorecardForm initial={c.generated_docs?.[5]?.data ?? null} candidate={c} user={{ name: actor }}
+          onClose={() => setDocForm(null)} onSave={(data) => { onSaveDoc(5, data); setDocForm(null); }} />
+      )}
+      {docView === 5 && c.generated_docs?.[5] && (
+        <DocViewer title={DOC_LABELS[5].thai} onClose={() => setDocView(null)}>
+          <ScorecardDoc data={c.generated_docs[5].data} candidate={c} />
+        </DocViewer>
+      )}
+      {docForm === 8 && (
+        <ProbationEvalForm initial={c.generated_docs?.[8]?.data ?? null} candidate={c} user={{ name: actor }}
+          onClose={() => setDocForm(null)} onSave={(data) => { onSaveDoc(8, data); setDocForm(null); }} />
+      )}
+      {docView === 8 && c.generated_docs?.[8] && (
+        <DocViewer title={DOC_LABELS[8].thai} onClose={() => setDocView(null)}>
+          <ProbationEvalDoc data={c.generated_docs[8].data} candidate={c} />
         </DocViewer>
       )}
 
@@ -1682,6 +1752,285 @@ function ApprovalDoc({ data, candidate, workflow }) {
         labels={[{ th: 'ผู้ร้องขอ', en: 'Requested by' }, { th: 'ผู้ตรวจสอบ', en: 'Verified by' }, { th: 'ผู้พิจารณา', en: 'Reviewed by' }, { th: 'ผู้อนุมัติ', en: 'Approved by' }]}
         workflow={workflow}
       />
+      <div style={{ fontSize: '9px', color: '#94a3b8', marginTop: '12px', textAlign: 'center' }}>สร้างโดยระบบ Recruitment 120 Days · JIANCHA GROUP · {fmtDate(todayISO())}</div>
+    </div>
+  );
+}
+
+// ===== Step 5: Interview Evaluation (Scorecard) =====
+function ScorecardForm({ initial, candidate, user, onClose, onSave }) {
+  const allKeys = EVAL_CRITERIA.flatMap((c) => c.items.map((i) => i.key));
+  const defaultScores = Object.fromEntries(allKeys.map((k) => [k, 3]));
+  const [form, setForm] = useState(initial ?? {
+    candidate_name: candidate.name ?? '', interview_date: todayISO(), level: 'JG5', division: candidate.department,
+    edu_match: 'match', exp_match: 'match', job_change: 'stable', residence: 'near',
+    scores: defaultScores, summary: '', probation_goals: '',
+    conclusion: 'hire', conclusion_other_position: '',
+    interviewer_name: user?.name ?? '', interviewer_position: '', interviewer_division: ''
+  });
+  const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
+  const setScore = (k, v) => setForm((f) => ({ ...f, scores: { ...f.scores, [k]: v } }));
+  const submit = (e) => { e.preventDefault(); onSave(form); };
+  return (
+    <Modal title="สร้าง Interview Evaluation Form" subtitle={`Step 5 · ${candidate.name || candidate.position}`} onClose={onClose} wide>
+      <form onSubmit={submit} className="space-y-3">
+        <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 space-y-2">
+          <div className="text-xs font-semibold text-slate-700">ส่วนที่ 1: ข้อมูลผู้สมัคร</div>
+          <Field label="ชื่อ-นามสกุล candidate" required><input className="input" value={form.candidate_name} onChange={(e) => set('candidate_name', e.target.value)} /></Field>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="วันที่สัมภาษณ์"><input type="date" className="input" value={form.interview_date} onChange={(e) => set('interview_date', e.target.value)} /></Field>
+            <Field label="ระดับ"><select className="input" value={form.level} onChange={(e) => set('level', e.target.value)}>{LEVELS.map((l) => <option key={l.code} value={l.code}>{l.code} ({l.label})</option>)}</select></Field>
+          </div>
+          <Field label="ฝ่าย"><input className="input" value={form.division} onChange={(e) => set('division', e.target.value)} /></Field>
+          <div className="grid grid-cols-2 gap-3 text-sm">
+            <div><div className="text-xs font-medium text-slate-600 mb-1">การศึกษา</div>
+              <label className="flex items-center gap-1"><input type="radio" name="edu" checked={form.edu_match === 'match'} onChange={() => set('edu_match', 'match')} /> ตรงตามสายงาน</label>
+              <label className="flex items-center gap-1"><input type="radio" name="edu" checked={form.edu_match === 'no_match'} onChange={() => set('edu_match', 'no_match')} /> ไม่ตรงตามสายงาน</label></div>
+            <div><div className="text-xs font-medium text-slate-600 mb-1">ประสบการณ์</div>
+              <label className="flex items-center gap-1"><input type="radio" name="exp" checked={form.exp_match === 'match'} onChange={() => set('exp_match', 'match')} /> ตรงตามสายงาน</label>
+              <label className="flex items-center gap-1"><input type="radio" name="exp" checked={form.exp_match === 'no_match'} onChange={() => set('exp_match', 'no_match')} /> ไม่ตรงตามสายงาน</label></div>
+            <div><div className="text-xs font-medium text-slate-600 mb-1">ประวัติการเปลี่ยนงาน</div>
+              <label className="flex items-center gap-1"><input type="radio" name="jc" checked={form.job_change === 'stable'} onChange={() => set('job_change', 'stable')} /> ไม่ค่อยเปลี่ยน (≥ 3 ปี)</label>
+              <label className="flex items-center gap-1"><input type="radio" name="jc" checked={form.job_change === 'frequent'} onChange={() => set('job_change', 'frequent')} /> เปลี่ยนบ่อย (1-2 ปี)</label></div>
+            <div><div className="text-xs font-medium text-slate-600 mb-1">ที่พัก</div>
+              <label className="flex items-center gap-1"><input type="radio" name="res" checked={form.residence === 'near'} onChange={() => set('residence', 'near')} /> ใกล้ที่ทำงาน (≤10 กม.)</label>
+              <label className="flex items-center gap-1"><input type="radio" name="res" checked={form.residence === 'far'} onChange={() => set('residence', 'far')} /> ไกลที่ทำงาน (&gt;10 กม.)</label></div>
+          </div>
+        </div>
+        <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 space-y-3">
+          <div className="text-xs font-semibold text-slate-700">ส่วนที่ 3: การประเมิน (5 = ยอดเยี่ยม, 1 = น้อยมาก)</div>
+          {EVAL_CRITERIA.map((cat) => (
+            <div key={cat.cat}>
+              <div className="text-xs font-semibold text-slate-800 mb-1">{cat.cat}</div>
+              {cat.items.map((it) => (
+                <div key={it.key} className="flex items-center gap-2 mb-1">
+                  <span className="text-xs flex-1 text-slate-700">{it.label}</span>
+                  <div className="flex gap-1">
+                    {[5, 4, 3, 2, 1].map((n) => (
+                      <label key={n} className={`text-xs cursor-pointer w-6 h-6 grid place-items-center rounded ${form.scores[it.key] === n ? 'bg-emerald-600 text-white font-bold' : 'bg-white border border-slate-300 text-slate-600 hover:border-slate-400'}`}>
+                        <input type="radio" hidden checked={form.scores[it.key] === n} onChange={() => setScore(it.key, n)} />{n}
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          ))}
+        </div>
+        <Field label="ส่วนที่ 4: บทสรุปการประเมินศักยภาพ"><textarea rows={3} className="input" value={form.summary} onChange={(e) => set('summary', e.target.value)} /></Field>
+        <Field label="ส่วนที่ 5: เป้าหมายในช่วงทดลองงาน"><textarea rows={3} className="input" value={form.probation_goals} onChange={(e) => set('probation_goals', e.target.value)} /></Field>
+        <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 space-y-2">
+          <div className="text-xs font-semibold text-slate-700">ส่วนที่ 6: ข้อสรุป</div>
+          {[['hire', '✓ สมควรจ้าง'], ['interview_again', '⟲ ให้สัมภาษณ์อีกครั้ง'], ['other_position', '↗ เหมาะกับตำแหน่งอื่น'], ['hold', '⏸ ยังไม่เหมาะ เก็บข้อมูลไว้'], ['no', '✕ ไม่เหมาะสม']].map(([v, l]) => (
+            <label key={v} className="flex items-center gap-2 text-sm"><input type="radio" name="cn" checked={form.conclusion === v} onChange={() => set('conclusion', v)} /> {l}</label>
+          ))}
+          {form.conclusion === 'other_position' && <input className="input ml-6" placeholder="ระบุตำแหน่งที่เหมาะสม" value={form.conclusion_other_position} onChange={(e) => set('conclusion_other_position', e.target.value)} />}
+        </div>
+        <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 space-y-2">
+          <div className="text-xs font-semibold text-slate-700">ผู้สัมภาษณ์</div>
+          <div className="grid grid-cols-3 gap-2">
+            <input className="input" placeholder="ชื่อ-นามสกุล" value={form.interviewer_name} onChange={(e) => set('interviewer_name', e.target.value)} />
+            <input className="input" placeholder="ตำแหน่ง" value={form.interviewer_position} onChange={(e) => set('interviewer_position', e.target.value)} />
+            <input className="input" placeholder="ฝ่าย" value={form.interviewer_division} onChange={(e) => set('interviewer_division', e.target.value)} />
+          </div>
+        </div>
+        <div className="flex justify-end gap-2 pt-2">
+          <button type="button" onClick={onClose} className="px-3 py-2 text-sm text-slate-600 hover:text-slate-900">ยกเลิก</button>
+          <button type="submit" className="px-4 py-2 text-sm bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg">บันทึก & สร้างเอกสาร</button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+function ScorecardDoc({ data, candidate }) {
+  const levelObj = LEVELS.find((l) => l.code === data.level) ?? { code: data.level, label: '' };
+  const scores = data.scores ?? {};
+  return (
+    <div className="print-document">
+      <DocHeader step={5} candidate={candidate} />
+      <div style={{ background: '#0f172a', color: 'white', padding: '12px 16px', borderRadius: '4px', marginBottom: '10px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px', flexWrap: 'wrap' }}>
+        <div><div style={{ fontSize: '10px', opacity: 0.7 }}>ตำแหน่งที่สัมภาษณ์</div><div style={{ fontSize: '18px', fontWeight: 700 }}>{candidate.position}</div></div>
+        <div style={{ textAlign: 'right' }}><div style={{ fontSize: '10px', opacity: 0.7 }}>แผนก · ฝ่าย</div><div style={{ fontSize: '14px', fontWeight: 600 }}>{candidate.department} · {data.division}</div>{levelObj.code && <div style={{ fontSize: '11px', opacity: 0.85 }}>ระดับ {levelObj.code} ({levelObj.label})</div>}</div>
+      </div>
+      <div className="section-bar">ส่วนที่ 1 : ข้อมูลผู้สมัคร</div>
+      <table className="form-table"><tbody>
+        <tr><td className="lbl" style={{ width: '15%' }}>ชื่อ-นามสกุล</td><td className="val" colSpan="5"><b style={{ fontSize: '14px' }}>{data.candidate_name || candidate.name || '(ยังไม่ระบุ)'}</b></td></tr>
+        <tr><td className="lbl">วันที่สัมภาษณ์</td><td className="val" colSpan="5">{fmtDate(data.interview_date)}</td></tr>
+        <tr><td className="lbl">การศึกษา</td><td className="val" colSpan="5"><Cb checked={data.edu_match === 'match'} label="ตรงตามสายงาน" /> &nbsp; <Cb checked={data.edu_match === 'no_match'} label="ไม่ตรงตามสายงาน" /></td></tr>
+        <tr><td className="lbl">ประสบการณ์</td><td className="val" colSpan="5"><Cb checked={data.exp_match === 'match'} label="ตรงตามสายงาน" /> &nbsp; <Cb checked={data.exp_match === 'no_match'} label="ไม่ตรงตามสายงาน" /></td></tr>
+        <tr><td className="lbl">ประวัติการเปลี่ยนงาน</td><td className="val" colSpan="5"><Cb checked={data.job_change === 'stable'} label="ไม่ค่อยเปลี่ยน (≥ 3 ปี)" /> &nbsp; <Cb checked={data.job_change === 'frequent'} label="เปลี่ยนบ่อย (1-2 ปี)" /></td></tr>
+        <tr><td className="lbl">ที่พัก</td><td className="val" colSpan="5"><Cb checked={data.residence === 'near'} label="ใกล้ที่ทำงาน (≤ 10 กม.)" /> &nbsp; <Cb checked={data.residence === 'far'} label="ไกลที่ทำงาน (> 10 กม.)" /></td></tr>
+      </tbody></table>
+      <div className="section-bar" style={{ marginTop: '12px' }}>ส่วนที่ 2 : คำนิยามการระบุคะแนน</div>
+      <table className="form-table"><tbody>{SCORE_DEFS.map((s) => (<tr key={s.n}><td className="lbl" style={{ width: '10%', textAlign: 'center' }}><b>{s.n}</b></td><td className="lbl" style={{ width: '15%' }}>{s.label}</td><td className="val" style={{ fontSize: '11px' }}>{s.desc}</td></tr>))}</tbody></table>
+      <div className="section-bar" style={{ marginTop: '12px' }}>ส่วนที่ 3 : การประเมินผู้สัมภาษณ์</div>
+      <table className="form-table">
+        <thead><tr style={{ background: '#e2e8f0' }}><td className="lbl" style={{ width: '55%' }}>หัวข้อการประเมิน</td><td className="lbl" style={{ textAlign: 'center' }}>ยอดเยี่ยม</td><td className="lbl" style={{ textAlign: 'center' }}>ดีมาก</td><td className="lbl" style={{ textAlign: 'center' }}>มาตรฐาน</td><td className="lbl" style={{ textAlign: 'center' }}>พอใช้</td><td className="lbl" style={{ textAlign: 'center' }}>น้อยมาก</td></tr></thead>
+        <tbody>
+          {EVAL_CRITERIA.map((cat) => (
+            <Fragment key={cat.cat}>
+              <tr><td colSpan="6" style={{ background: '#f1f5f9', padding: '4px 8px', fontWeight: 600, fontSize: '11px' }}>{cat.cat}</td></tr>
+              {cat.items.map((it) => (<tr key={it.key}><td className="val" style={{ fontSize: '11px', paddingLeft: '16px' }}>• {it.label}</td>{[5, 4, 3, 2, 1].map((n) => <td key={n} className="val" style={{ textAlign: 'center' }}>{scores[it.key] === n ? '✓' : ''}</td>)}</tr>))}
+            </Fragment>
+          ))}
+        </tbody>
+      </table>
+      <div className="section-bar" style={{ marginTop: '12px' }}>ส่วนที่ 4 : บทสรุปการประเมินศักยภาพ</div>
+      <div style={{ border: '1px solid #94a3b8', borderTop: 'none', minHeight: '70px', padding: '10px', whiteSpace: 'pre-wrap', fontSize: '11px' }}>{data.summary || ''}</div>
+      <div className="section-bar" style={{ marginTop: '12px' }}>ส่วนที่ 5 : เป้าหมายในช่วงทดลองงาน</div>
+      <div style={{ border: '1px solid #94a3b8', borderTop: 'none', minHeight: '70px', padding: '10px', whiteSpace: 'pre-wrap', fontSize: '11px' }}>{data.probation_goals || ''}</div>
+      <div className="section-bar" style={{ marginTop: '12px' }}>ส่วนที่ 6 : ข้อสรุป</div>
+      <div className="check-grid">
+        <Cb checked={data.conclusion === 'hire'} label="สมควรจ้าง" />
+        <Cb checked={data.conclusion === 'hold'} label="ยังไม่เหมาะ เก็บข้อมูลไว้พิจารณา" />
+        <Cb checked={data.conclusion === 'interview_again'} label="ให้สัมภาษณ์อีกครั้ง" />
+        <Cb checked={data.conclusion === 'no'} label="ไม่เหมาะสม" />
+        <Cb checked={data.conclusion === 'other_position'} label={`เหมาะกับตำแหน่งอื่น ${data.conclusion === 'other_position' ? `(${data.conclusion_other_position})` : ''}`} />
+      </div>
+      <table className="form-table" style={{ marginTop: '14px' }}><tbody>
+        <tr><td className="lbl" style={{ width: '15%' }}>ผู้สัมภาษณ์</td><td className="val">{data.interviewer_name}</td><td className="lbl" style={{ width: '15%' }}>ตำแหน่ง</td><td className="val">{data.interviewer_position}</td><td className="lbl" style={{ width: '10%' }}>ฝ่าย</td><td className="val">{data.interviewer_division}</td></tr>
+      </tbody></table>
+      <div style={{ fontSize: '9px', color: '#94a3b8', marginTop: '12px', textAlign: 'center' }}>สร้างโดยระบบ Recruitment 120 Days · JIANCHA GROUP · {fmtDate(todayISO())}</div>
+    </div>
+  );
+}
+
+// ===== Step 8: Probation Evaluation =====
+function ProbationEvalForm({ initial, candidate, user, onClose, onSave }) {
+  const probStart = candidate.probation?.startDate ?? todayISO();
+  const allKeys = PROB_CRITERIA.flatMap((s) => s.items.map((i) => i.key));
+  const blankScores = Object.fromEntries(allKeys.map((k) => [k, 0]));
+  const [form, setForm] = useState(initial ?? {
+    probation_start: probStart, pass_day119_date: addDays(probStart, 119),
+    evaluator_name: '', evaluator_position: '', evaluator_email: '',
+    rounds: {
+      day30: { date: addDays(probStart, 30), scores: { ...blankScores }, comment: '' },
+      day60: { date: addDays(probStart, 60), scores: { ...blankScores }, comment: '' },
+      day90: { date: addDays(probStart, 90), scores: { ...blankScores }, comment: '' }
+    },
+    final_status: '', final_comment: ''
+  });
+  const setBasic = (k, v) => setForm((f) => ({ ...f, [k]: v }));
+  const setRoundField = (round, field, v) => setForm((f) => ({ ...f, rounds: { ...f.rounds, [round]: { ...f.rounds[round], [field]: v } } }));
+  const setRoundScore = (round, key, v) => setForm((f) => ({ ...f, rounds: { ...f.rounds, [round]: { ...f.rounds[round], scores: { ...f.rounds[round].scores, [key]: v } } } }));
+  const submit = (e) => { e.preventDefault(); if (!form.evaluator_name?.trim()) { alert('กรุณากรอกชื่อผู้ประเมิน'); return; } onSave(form); };
+  const renderRound = (round, label, dayNum) => (
+    <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 space-y-2">
+      <div className="flex items-center justify-between">
+        <div className="text-xs font-semibold text-slate-700">{label} · Day {dayNum}</div>
+        <input type="date" className="input text-xs" style={{ maxWidth: 160 }} value={form.rounds[round].date} onChange={(e) => setRoundField(round, 'date', e.target.value)} />
+      </div>
+      <div className="text-[10px] text-slate-500">5=ยอดเยี่ยม · 4=ดีมาก · 3=มาตรฐาน · 2=พอใช้ · 1=น้อยมาก · 0=ยังไม่ประเมิน</div>
+      {PROB_CRITERIA.map((sec) => (
+        <div key={sec.section}>
+          <div className="text-[11px] font-semibold text-slate-700 mt-2">{sec.section}</div>
+          {sec.items.map((it) => (
+            <div key={it.key} className="flex items-center gap-2 mb-1">
+              <span className="text-xs flex-1 text-slate-700">{it.label}</span>
+              <div className="flex gap-1">
+                {[5, 4, 3, 2, 1].map((n) => (
+                  <label key={n} className={`text-xs cursor-pointer w-6 h-6 grid place-items-center rounded ${form.rounds[round].scores[it.key] === n ? 'bg-violet-600 text-white font-bold' : 'bg-white border border-slate-300 text-slate-600 hover:border-slate-400'}`}>
+                    <input type="radio" hidden checked={form.rounds[round].scores[it.key] === n} onChange={() => setRoundScore(round, it.key, n)} />{n}
+                  </label>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      ))}
+      <Field label="ความคิดเห็นรอบนี้"><textarea rows={2} className="input" value={form.rounds[round].comment} onChange={(e) => setRoundField(round, 'comment', e.target.value)} /></Field>
+    </div>
+  );
+  return (
+    <Modal title="Probation Evaluation Form" subtitle={`Step 8 · ${candidate.name || candidate.position}`} onClose={onClose} wide>
+      <form onSubmit={submit} className="space-y-3">
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="วันเริ่มทดลองงาน"><input type="date" className="input" value={form.probation_start} onChange={(e) => setBasic('probation_start', e.target.value)} /></Field>
+          <Field label="วันผ่านทดลองงาน (Day 119)"><input type="date" className="input" value={form.pass_day119_date} onChange={(e) => setBasic('pass_day119_date', e.target.value)} /></Field>
+        </div>
+        <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 space-y-2">
+          <div className="text-xs font-semibold text-slate-700">ผู้ประเมิน</div>
+          <div className="grid grid-cols-3 gap-2">
+            <input className="input" placeholder="ชื่อ-นามสกุล" value={form.evaluator_name} onChange={(e) => setBasic('evaluator_name', e.target.value)} />
+            <input className="input" placeholder="ตำแหน่ง" value={form.evaluator_position} onChange={(e) => setBasic('evaluator_position', e.target.value)} />
+            <input className="input" placeholder="email@..." value={form.evaluator_email} onChange={(e) => setBasic('evaluator_email', e.target.value)} />
+          </div>
+        </div>
+        {renderRound('day30', 'รอบที่ 1 · ประเมิน', 30)}
+        {renderRound('day60', 'รอบที่ 2 · ประเมิน', 60)}
+        {renderRound('day90', 'รอบที่ 3 · ประเมิน', 90)}
+        <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3 space-y-2">
+          <div className="text-xs font-semibold text-emerald-900">สรุปผลทดลองงาน · Day 119</div>
+          {[['passed', '✓ ผ่านทดลองงาน · บรรจุพนักงานประจำ'], ['extended', '⟲ ทดลองงานต่อ'], ['failed', '✕ ไม่ผ่านทดลองงาน']].map(([v, l]) => (
+            <label key={v} className="flex items-center gap-2 text-sm"><input type="radio" name="ps" checked={form.final_status === v} onChange={() => setBasic('final_status', v)} /> {l}</label>
+          ))}
+          <Field label="ความเห็นรวม (สรุปทั้ง 3 รอบ)"><textarea rows={3} className="input" value={form.final_comment} onChange={(e) => setBasic('final_comment', e.target.value)} /></Field>
+        </div>
+        <div className="flex justify-end gap-2 pt-2">
+          <button type="button" onClick={onClose} className="px-3 py-2 text-sm text-slate-600 hover:text-slate-900">ยกเลิก</button>
+          <button type="submit" className="px-4 py-2 text-sm bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg">บันทึก & สร้างเอกสาร</button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+function ProbationRoundBlock({ roundNo, dayLabel, roundData }) {
+  const r = roundData ?? { scores: {}, comment: '', date: '' };
+  const scores = r.scores ?? {};
+  const totalKeys = PROB_CRITERIA.flatMap((s) => s.items.map((i) => i.key));
+  const filledCount = totalKeys.filter((k) => scores[k] > 0).length;
+  const totalScore = totalKeys.reduce((sum, k) => sum + (scores[k] || 0), 0);
+  const maxScore = totalKeys.length * 5;
+  return (
+    <>
+      <div className="section-bar" style={{ marginTop: '14px' }}>รอบที่ {roundNo} · ประเมิน <b>Day {dayLabel}</b> · {r.date ? `เมื่อ ${fmtDate(r.date)}` : '(ยังไม่กำหนดวัน)'} · กรอกแล้ว {filledCount}/{totalKeys.length}</div>
+      <table className="form-table">
+        <thead><tr style={{ background: '#e2e8f0' }}><td className="lbl" style={{ width: '55%' }}>หัวข้อการประเมิน</td><td className="lbl" style={{ textAlign: 'center' }}>5</td><td className="lbl" style={{ textAlign: 'center' }}>4</td><td className="lbl" style={{ textAlign: 'center' }}>3</td><td className="lbl" style={{ textAlign: 'center' }}>2</td><td className="lbl" style={{ textAlign: 'center' }}>1</td></tr></thead>
+        <tbody>
+          {PROB_CRITERIA.map((sec) => (
+            <Fragment key={sec.section}>
+              <tr><td colSpan="6" style={{ background: '#f1f5f9', padding: '4px 8px', fontWeight: 600, fontSize: '10px' }}>{sec.section}</td></tr>
+              {sec.items.map((it) => (<tr key={it.key}><td className="val" style={{ fontSize: '10px', paddingLeft: '12px' }}>• {it.label}</td>{[5, 4, 3, 2, 1].map((n) => <td key={n} className="val" style={{ textAlign: 'center' }}>{scores[it.key] === n ? '✓' : ''}</td>)}</tr>))}
+            </Fragment>
+          ))}
+          {filledCount > 0 && (<tr style={{ background: '#f1f5f9', fontWeight: 600 }}><td className="lbl" style={{ paddingLeft: '12px' }}>คะแนนรวมรอบนี้</td><td colSpan="5" className="val" style={{ textAlign: 'right', paddingRight: '10px' }}>{totalScore} / {maxScore} · เฉลี่ย {(totalScore / totalKeys.length).toFixed(1)} / 5</td></tr>)}
+        </tbody>
+      </table>
+      {r.comment && <div style={{ border: '1px solid #94a3b8', borderTop: 'none', padding: '8px 12px', fontSize: '11px', whiteSpace: 'pre-wrap', background: '#fafafa' }}><b>ความคิดเห็นรอบที่ {roundNo}:</b><br />{r.comment}</div>}
+    </>
+  );
+}
+
+function ProbationEvalDoc({ data, candidate }) {
+  const rounds = data.rounds ?? { day30: {}, day60: {}, day90: {} };
+  const statusLabel = { passed: '✓ ผ่านทดลองงาน · บรรจุพนักงานประจำ', extended: '⟲ ทดลองงานต่อ', failed: '✕ ไม่ผ่านทดลองงาน' }[data.final_status];
+  const statusColor = { passed: '#16a34a', extended: '#d97706', failed: '#dc2626' }[data.final_status];
+  return (
+    <div className="print-document">
+      <DocHeader step={8} candidate={candidate} />
+      <div className="section-bar">ส่วนที่ 1 : ข้อมูลพนักงาน</div>
+      <table className="form-table"><tbody>
+        <tr><td className="lbl" style={{ width: '15%' }}>ชื่อ-นามสกุล</td><td className="val" style={{ width: '35%' }}><b>{candidate.name || '—'}</b></td><td className="lbl" style={{ width: '15%' }}>ตำแหน่ง</td><td className="val" style={{ width: '35%' }}>{candidate.position}</td></tr>
+        <tr><td className="lbl">แผนก</td><td className="val">{candidate.department}</td><td className="lbl">วันเริ่มทดลองงาน</td><td className="val">{fmtDate(data.probation_start)}</td></tr>
+        <tr><td className="lbl">ผู้ประเมิน</td><td className="val" colSpan="3">{data.evaluator_name} · {data.evaluator_position}{data.evaluator_email ? ` · ${data.evaluator_email}` : ''}</td></tr>
+        <tr><td className="lbl">วันผ่านทดลองงาน</td><td className="val" colSpan="3">{fmtDate(data.pass_day119_date)} (Day 119)</td></tr>
+      </tbody></table>
+      <div className="section-bar" style={{ marginTop: '14px', background: '#475569' }}>ส่วนที่ 2 : ผลการประเมินรายช่วง</div>
+      <ProbationRoundBlock roundNo={1} dayLabel="30" roundData={rounds.day30} />
+      <ProbationRoundBlock roundNo={2} dayLabel="60" roundData={rounds.day60} />
+      <ProbationRoundBlock roundNo={3} dayLabel="90" roundData={rounds.day90} />
+      <div className="section-bar" style={{ marginTop: '14px' }}>ส่วนที่ 3 : สรุปผล · Day 119</div>
+      <table className="form-table"><tbody>
+        <tr><td className="lbl" style={{ width: '30%' }}>สถานะการประเมิน</td><td className="val">
+          <Cb checked={data.final_status === 'passed'} label="ผ่านทดลองงาน · บรรจุประจำ" /> &nbsp; <Cb checked={data.final_status === 'extended'} label="ทดลองงานต่อ" /> &nbsp; <Cb checked={data.final_status === 'failed'} label="ไม่ผ่านทดลองงาน" />
+          {statusLabel && <div style={{ marginTop: '6px' }}><span style={{ display: 'inline-block', padding: '4px 12px', borderRadius: 4, background: `${statusColor}20`, color: statusColor, fontWeight: 700, fontSize: '12px' }}>{statusLabel}</span></div>}
+        </td></tr>
+        {data.final_comment && <tr><td className="lbl">ความเห็นรวม</td><td className="val" style={{ whiteSpace: 'pre-wrap' }}>{data.final_comment}</td></tr>}
+      </tbody></table>
+      <div className="section-bar" style={{ marginTop: '14px' }}>ลงนามสรุป (Day 119)</div>
+      <SignatureBlocks labels={[{ th: 'ผู้ประเมินหลัก', en: 'Primary Evaluator' }, { th: 'พนักงาน', en: 'Employee' }, { th: 'HR Manager', en: 'Approved by' }]} />
       <div style={{ fontSize: '9px', color: '#94a3b8', marginTop: '12px', textAlign: 'center' }}>สร้างโดยระบบ Recruitment 120 Days · JIANCHA GROUP · {fmtDate(todayISO())}</div>
     </div>
   );
