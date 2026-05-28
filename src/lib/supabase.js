@@ -11,20 +11,43 @@ if (!url || !anonKey) {
 }
 
 export const supabase = createClient(url ?? '', anonKey ?? '', {
-  auth: { persistSession: false },
+  auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: false },
   realtime: { params: { eventsPerSecond: 5 } }
 });
 
-// Free-text actor label used for audit log and updated_by/created_by columns.
-// Each HR member picks their own name once; we keep it in localStorage.
-const ACTOR_KEY = 'recruitment-tracker.actor';
-export function getActor() {
-  if (typeof window === 'undefined') return import.meta.env.VITE_DEFAULT_ACTOR ?? 'HR';
-  return localStorage.getItem(ACTOR_KEY) || import.meta.env.VITE_DEFAULT_ACTOR || 'HR';
+// ---------- Auth (HR login) -----------------------------------------------
+// HR ใช้ username สั้น ๆ (HR01/HR02/HR03) — map เป็นอีเมลภายในเพื่อใช้กับ
+// Supabase Auth (email/password). โดเมน @jchr-global.com ไม่ต้องส่งเมลจริง
+// (สร้าง user แบบ Auto Confirm ใน Supabase dashboard)
+const LOGIN_DOMAIN = 'jchr-global.com';
+export function usernameToEmail(u) {
+  const s = String(u || '').trim();
+  return s.includes('@') ? s.toLowerCase() : `${s.toLowerCase()}@${LOGIN_DOMAIN}`;
 }
-export function setActor(name) {
-  if (typeof window === 'undefined') return;
-  localStorage.setItem(ACTOR_KEY, name);
+export function actorFromSession(session) {
+  const email = session?.user?.email || '';
+  return email ? email.split('@')[0].toUpperCase() : 'HR';
+}
+
+// actor used for audit / created_by / updated_by — derived from logged-in user
+let _actor = 'HR';
+export function getActor() { return _actor; }
+supabase.auth.getSession().then(({ data }) => { _actor = actorFromSession(data.session); });
+supabase.auth.onAuthStateChange((_event, session) => { _actor = actorFromSession(session); });
+
+export async function signIn(username, password) {
+  const { data, error } = await supabase.auth.signInWithPassword({
+    email: usernameToEmail(username), password
+  });
+  if (error) throw error;
+  _actor = actorFromSession(data.session);
+  return data.session;
+}
+export async function signOut() { await supabase.auth.signOut(); }
+export async function getSession() { const { data } = await supabase.auth.getSession(); return data.session; }
+export function onAuthChange(cb) {
+  const { data } = supabase.auth.onAuthStateChange((_event, session) => cb(session));
+  return () => data.subscription.unsubscribe();
 }
 
 // ---------- CRUD helpers ---------------------------------------------------

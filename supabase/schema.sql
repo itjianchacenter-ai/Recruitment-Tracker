@@ -79,7 +79,7 @@ create index if not exists idx_audit_candidate on public.candidate_audit(candida
 create index if not exists idx_audit_time      on public.candidate_audit(occurred_at desc);
 
 create or replace function public.log_candidate_audit()
-returns trigger language plpgsql as $$
+returns trigger language plpgsql security definer set search_path = public as $$
 begin
   if (tg_op = 'DELETE') then
     insert into public.candidate_audit(candidate_id, action, actor, diff)

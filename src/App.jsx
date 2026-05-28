@@ -3,11 +3,11 @@ import {
   Plus, Search, Users, CheckCircle2, AlertTriangle, AlertCircle, ClipboardCheck,
   X, ChevronRight, Calendar, Trash2, Edit2, FileText, FileCheck, Briefcase,
   CalendarClock, ShieldCheck, UserCircle2, Loader2, BarChart3, TrendingUp,
-  Building2, Wallet, Clock, PenLine
+  Building2, Wallet, Clock, PenLine, LogOut, Lock
 } from 'lucide-react';
 import {
   listCandidates, createCandidate, updateCandidate, deleteCandidate,
-  subscribeCandidates, getActor, setActor
+  subscribeCandidates, signIn, signOut, getSession, onAuthChange, actorFromSession
 } from './lib/supabase.js';
 
 // ============================================================================
@@ -146,10 +146,22 @@ export default function App() {
   const [editing, setEditing]       = useState(null);
   const [opening, setOpening]       = useState(null);
   const [editingName, setEditingName] = useState(null);
-  const [actor, setActorState]      = useState(getActor());
+  const [session, setSession]       = useState(undefined); // undefined=checking · null=logged out · obj=logged in
+  const actor = actorFromSession(session);
 
+  // Auth: check session + subscribe to changes
   useEffect(() => {
     let mounted = true;
+    getSession().then((s) => { if (mounted) setSession(s ?? null); });
+    const unsub = onAuthChange((s) => { if (mounted) setSession(s ?? null); });
+    return () => { mounted = false; unsub?.(); };
+  }, []);
+
+  // Data: load + realtime — only when logged in
+  useEffect(() => {
+    if (!session) { setCandidates([]); return; }
+    let mounted = true;
+    setLoading(true); setError(null);
     listCandidates()
       .then((rows) => { if (mounted) { setCandidates(rows); setLoading(false); } })
       .catch((e)  => { if (mounted) { setError(e.message); setLoading(false); } });
@@ -163,7 +175,7 @@ export default function App() {
       });
     });
     return () => { mounted = false; unsub?.(); };
-  }, []);
+  }, [session]);
 
   const departments = useMemo(() => {
     const set = new Set(DEFAULT_DEPARTMENTS);
@@ -303,11 +315,18 @@ export default function App() {
     { key: 'probation',  title: '🛡 Process Probation',     sub: 'ทดลองงาน 120 วัน · Step 8 + ผ่านโปร' }
   ];
 
+  if (session === undefined) {
+    return <div className="min-h-screen grid place-items-center text-slate-400"><Loader2 className="w-6 h-6 animate-spin" /></div>;
+  }
+  if (!session) {
+    return <Login />;
+  }
+
   return (
     <div className="min-h-screen">
       <Header
         actor={actor}
-        onActorChange={(name) => { setActor(name); setActorState(name); }}
+        onSignOut={signOut}
         onNew={() => setEditing('new')}
       />
 
@@ -403,9 +422,7 @@ export default function App() {
 // Header
 // ============================================================================
 
-function Header({ actor, onActorChange, onNew }) {
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(actor);
+function Header({ actor, onSignOut, onNew }) {
   return (
     <header className="bg-white border-b border-slate-200 sticky top-0 z-30">
       <div className="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between gap-4">
@@ -419,29 +436,83 @@ function Header({ actor, onActorChange, onNew }) {
           </div>
         </div>
         <div className="flex items-center gap-2">
-          {editing ? (
-            <input
-              autoFocus value={draft}
-              onChange={(e) => setDraft(e.target.value)}
-              onBlur={() => { onActorChange(draft || 'HR'); setEditing(false); }}
-              onKeyDown={(e) => { if (e.key === 'Enter') { onActorChange(draft || 'HR'); setEditing(false); } }}
-              className="text-sm border border-slate-300 rounded-lg px-2 py-1 w-28"
-            />
-          ) : (
-            <button onClick={() => setEditing(true)}
-              className="text-sm text-slate-600 hover:text-slate-900 flex items-center gap-1.5 px-2 py-1 rounded-lg hover:bg-slate-100"
-              title="คลิกเพื่อเปลี่ยนชื่อผู้ใช้งาน">
-              <UserCircle2 className="w-4 h-4" />
-              <span className="hidden sm:inline">{actor}</span>
-            </button>
-          )}
+          <span className="hidden sm:inline-flex items-center gap-1.5 text-sm text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-lg">
+            <UserCircle2 className="w-4 h-4" /> {actor}
+          </span>
           <button onClick={onNew}
             className="inline-flex items-center gap-1.5 bg-slate-900 hover:bg-slate-800 text-white text-sm font-medium px-3 py-2 rounded-lg">
             <Plus className="w-4 h-4" /> New Requisition
           </button>
+          <button onClick={onSignOut}
+            className="inline-flex items-center gap-1.5 text-slate-500 hover:text-slate-900 hover:bg-slate-100 text-sm px-2 py-2 rounded-lg"
+            title="ออกจากระบบ">
+            <LogOut className="w-4 h-4" />
+          </button>
         </div>
       </div>
     </header>
+  );
+}
+
+// ============================================================================
+// Login (HR sign-in)
+// ============================================================================
+
+function Login() {
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState(null);
+
+  async function submit(e) {
+    e.preventDefault();
+    setErr(null); setBusy(true);
+    try {
+      await signIn(username, password);
+      // onAuthChange in App will flip to the app automatically
+    } catch (e2) {
+      setErr('เข้าสู่ระบบไม่สำเร็จ — ตรวจสอบ Username / รหัสผ่าน');
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="min-h-screen grid place-items-center bg-slate-100 px-4">
+      <div className="w-full max-w-sm bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
+        <div className="text-center mb-5">
+          <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-slate-900 to-slate-700 mx-auto mb-3 grid place-items-center text-white">
+            <Briefcase className="w-6 h-6" />
+          </div>
+          <h1 className="text-lg font-semibold text-slate-900">Recruitment 120 Days</h1>
+          <p className="text-xs text-slate-500 mt-1">เข้าสู่ระบบสำหรับทีม HR</p>
+        </div>
+        <form onSubmit={submit} className="space-y-3">
+          <div>
+            <label className="text-xs font-medium text-slate-600">Username</label>
+            <div className="relative mt-1">
+              <UserCircle2 className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+              <input autoFocus value={username} onChange={(e) => setUsername(e.target.value)}
+                placeholder="HR01" autoComplete="username"
+                className="w-full text-sm border border-slate-300 rounded-lg pl-9 pr-3 py-2 focus:outline-none focus:ring-2 focus:ring-slate-300" />
+            </div>
+          </div>
+          <div>
+            <label className="text-xs font-medium text-slate-600">รหัสผ่าน (6 หลัก)</label>
+            <div className="relative mt-1">
+              <Lock className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+              <input type="password" inputMode="numeric" value={password} onChange={(e) => setPassword(e.target.value)}
+                placeholder="••••••" autoComplete="current-password"
+                className="w-full text-sm border border-slate-300 rounded-lg pl-9 pr-3 py-2 focus:outline-none focus:ring-2 focus:ring-slate-300" />
+            </div>
+          </div>
+          {err && <div className="text-xs text-rose-600 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2">{err}</div>}
+          <button type="submit" disabled={busy || !username || !password}
+            className="w-full inline-flex items-center justify-center gap-1.5 bg-slate-900 hover:bg-slate-800 disabled:opacity-50 text-white text-sm font-medium py-2.5 rounded-lg">
+            {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Lock className="w-4 h-4" />} เข้าสู่ระบบ
+          </button>
+        </form>
+      </div>
+    </div>
   );
 }
 
