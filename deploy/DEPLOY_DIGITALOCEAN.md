@@ -8,9 +8,12 @@
 
 ## ⚠️ อ่านก่อน (2 เรื่อง)
 
-1. **เรื่อง IP:** subdomain ต้องชี้ไปที่ IP ของ **Droplet ที่จะรันแอป** — ถ้า `168.144.97.11` ไม่ใช่ Droplet (อาจเป็นเซิร์ฟเวอร์โดเมนเดิม) ให้ใช้ IP ของ Droplet แทน เช็คได้จาก DigitalOcean Console → Droplets → คอลัมน์ ipv4
+**Infra:** DNS = **Cloudflare** (jchr-global.com) · Hosting = **DigitalOcean Droplet**
+
+1. **เรื่อง IP:** A record ที่ Cloudflare ต้องชี้ไปที่ IP ของ **Droplet ที่จะรันแอป** — ถ้า `168.144.97.11` ไม่ใช่ Droplet ให้ใช้ IP ของ Droplet แทน (เช็คที่ DigitalOcean Console → Droplets → ipv4)
 2. **เรื่องความปลอดภัย (ต้องรู้):** โค้ดตอนนี้ยัง **ไม่มี login + ฐานข้อมูลเปิดสาธารณะ** (ดู `PRODUCTION_READINESS_ASSESSMENT.md`) ถ้าเปิด public ทันที = ข้อมูลพนักงาน/เงินเดือนเข้าถึงได้โดยไม่ login
-   - **แนะนำ:** ทำ login + RLS ให้เสร็จก่อน **หรือ** เปิดเฉพาะ IP ออฟฟิศไปก่อน (มีในขั้นที่ 7 + ในไฟล์ `nginx-recruitment.conf`)
+   - **ทางลัดที่ดีสุด:** เปิด **Cloudflare Access** (Zero Trust) ครอบ subdomain → บังคับ login ด้วยอีเมลบริษัทที่ขอบ Cloudflare ทันที ไม่ต้องเขียนโค้ด (ดูขั้นที่ 7)
+   - ระยะยาว: ทำ login + RLS ในแอปให้เสร็จ
 
 ---
 
@@ -29,12 +32,14 @@
 
 # OPTION A — Frontend บน Droplet + Supabase Cloud
 
-## ขั้นที่ 1 — DNS (ทำที่ผู้ดูแลโดเมน jchr-global.com)
-เพิ่ม **A record**:
+## ขั้นที่ 1 — DNS (ที่ **Cloudflare**)
+Cloudflare Dashboard → เลือกโดเมน `jchr-global.com` → **DNS → Add record**:
 ```
-Type: A   Host: recruitment   Value: <IP ของ Droplet>   TTL: 3600
+Type: A   Name: recruitment   IPv4 address: <IP ของ Droplet>   Proxy: Proxied (เมฆส้ม 🟠)   TTL: Auto
 ```
-รอ DNS propagate (ไม่กี่นาที–ชั่วโมง) เช็ค: `nslookup recruitment.jchr-global.com` ต้องได้ IP Droplet
+- **Proxied (เมฆส้ม)** = แนะนำ → ได้ WAF / DDoS protection / CDN / ซ่อน IP จริงของ Droplet
+- เช็ค: `nslookup recruitment.jchr-global.com` (ถ้า Proxied จะได้ IP ของ Cloudflare ไม่ใช่ Droplet — เป็นเรื่องปกติ)
+> ถ้าจะออก cert ด้วย Let's Encrypt ให้ตั้ง proxy เป็นเมฆเทาชั่วคราว **หรือ** ใช้ Cloudflare Origin Certificate (แนะนำ — ดูขั้นที่ 6)
 
 ## ขั้นที่ 2 — Backend (Supabase Cloud)
 1. สร้างโปรเจกต์ที่ https://supabase.com (เลือก region **Singapore** ใกล้ไทยสุด)
@@ -95,19 +100,41 @@ sudo mkdir -p /var/www/certbot
 sudo nginx -t && sudo systemctl reload nginx
 ```
 
-## ขั้นที่ 6 — TLS (HTTPS ฟรีจาก Let's Encrypt)
-```bash
-sudo apt install -y certbot python3-certbot-nginx
-sudo certbot --nginx -d recruitment.jchr-global.com --redirect -m it@jchr-global.com --agree-tos --no-eff-email
-# certbot จะต่ออายุอัตโนมัติ (systemd timer)
-```
+## ขั้นที่ 6 — TLS / HTTPS (ผ่าน **Cloudflare**)
+**แนะนำ: Cloudflare Origin Certificate** (ไม่ต้องต่ออายุ อายุ 15 ปี · ง่ายสุดเมื่อใช้ Cloudflare)
+1. Cloudflare → **SSL/TLS → Origin Server → Create Certificate** → คัดลอก *Origin Certificate* + *Private Key*
+2. บน Droplet:
+   ```bash
+   sudo mkdir -p /etc/ssl/cloudflare
+   sudo nano /etc/ssl/cloudflare/recruitment.pem   # วาง Origin Certificate
+   sudo nano /etc/ssl/cloudflare/recruitment.key   # วาง Private Key
+   ```
+3. ในไฟล์ `nginx-recruitment.conf` ใส่ path cert (ในบล็อก 443):
+   ```
+   ssl_certificate     /etc/ssl/cloudflare/recruitment.pem;
+   ssl_certificate_key /etc/ssl/cloudflare/recruitment.key;
+   ```
+   แล้ว `sudo nginx -t && sudo systemctl reload nginx`
+4. Cloudflare → **SSL/TLS → Overview** → ตั้งโหมด **Full (strict)**
+5. Cloudflare → **SSL/TLS → Edge Certificates** → เปิด **Always Use HTTPS** + **HSTS**
+
+**ทางเลือก: Let's Encrypt** (ถ้าไม่ใช้ Origin Cert) → ตั้ง DNS proxy เป็นเมฆเทาก่อน แล้ว `sudo apt install -y certbot python3-certbot-nginx && sudo certbot --nginx -d recruitment.jchr-global.com` เสร็จแล้วเปิด proxy กลับ + ตั้ง SSL mode **Full (strict)**
+
 เปิด https://recruitment.jchr-global.com → ต้องเห็นระบบ + กุญแจล็อก 🔒
 
 ## ขั้นที่ 7 — Security (สำคัญก่อนใช้ข้อมูลจริง)
-เลือกอย่างน้อย 1 ข้อก่อนเปิดให้คนใช้:
-- **(แนะนำ) ทำ login + แก้ RLS** ใน Supabase (ดู assessment) แล้วค่อยเปิด public
-- **(ชั่วคราว) จำกัด IP ออฟฟิศ:** แก้ `nginx-recruitment.conf` ปลดคอมเมนต์ `allow <office-ip>; deny all;` แล้ว `sudo systemctl reload nginx`
-- เปลี่ยน anon key ให้เป็นของ production · เปิด backup ใน Supabase
+**🔑 แนะนำสุด — Cloudflare Access (ปิดช่อง "ไม่มี login" ได้ทันที ไม่ต้องเขียนโค้ด):**
+Cloudflare → **Zero Trust → Access → Applications → Add application → Self-hosted**
+- Application domain: `recruitment.jchr-global.com`
+- Policy: **Allow** เฉพาะอีเมลโดเมนบริษัท (เช่น `@jchr-global.com`, `@jianchatea.com`) หรือรายชื่อ HR
+→ ทุกคนต้อง login (Google/Microsoft/Email OTP) ที่หน้า Cloudflare ก่อนเข้าเว็บ = กันคนนอกได้ทันที เหมาะมากกับเครื่องมือ HR ภายใน (ฟรีถึง 50 ผู้ใช้)
+
+**ทางเลือก/เสริม:**
+- จำกัด IP ออฟฟิศ: ทำที่ **Cloudflare → Security → WAF → Tools → IP Access Rules** (ดีกว่าแก้ nginx เพราะ proxy บัง client IP จริง)
+- (ระยะยาว) ทำ login + แก้ RLS ในแอป/Supabase ตาม `PRODUCTION_READINESS_ASSESSMENT.md`
+- เปลี่ยน anon key เป็นของ production · เปิด backup ใน Supabase
+
+> ⚠️ เมื่อเปิด Cloudflare proxy การ `allow/deny IP` ใน nginx จะเห็นเป็น IP ของ Cloudflare (ไม่ใช่ client จริง) → ใช้ Cloudflare Access / IP Access Rules แทน หรือ restore real IP ด้วย header `CF-Connecting-IP`
 
 ---
 
