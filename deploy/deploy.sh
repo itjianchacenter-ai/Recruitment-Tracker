@@ -20,6 +20,8 @@ echo "==> [3/4] publish dist -> $WEB_DIR/dist"
 mkdir -p "$WEB_DIR"
 rm -rf "$WEB_DIR/dist"
 cp -r dist "$WEB_DIR/dist"
+# also publish the clickable prototype for the team to try (sandbox, no login)
+cp preview.html "$WEB_DIR/dist/preview.html"
 
 echo "==> [4/4] reload nginx"
 nginx -t && systemctl reload nginx
