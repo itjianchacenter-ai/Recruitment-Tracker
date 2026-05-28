@@ -3,11 +3,11 @@ import {
   Plus, Search, Users, CheckCircle2, AlertTriangle, AlertCircle, ClipboardCheck,
   X, ChevronRight, Calendar, Trash2, Edit2, FileText, FileCheck, Briefcase,
   CalendarClock, ShieldCheck, UserCircle2, Loader2, BarChart3, TrendingUp,
-  Building2, Wallet, Clock, PenLine, LogOut, Lock
+  Building2, Wallet, Clock, PenLine, LogOut, Lock, Mail, Send
 } from 'lucide-react';
 import {
   listCandidates, createCandidate, updateCandidate, deleteCandidate,
-  subscribeCandidates, signIn, signOut, getSession, onAuthChange, actorFromSession
+  subscribeCandidates, signIn, signOut, getSession, onAuthChange, actorFromSession, sendEmail
 } from './lib/supabase.js';
 
 // ============================================================================
@@ -403,6 +403,13 @@ export default function App() {
     await updateCandidate(c.id, patch);
   }
 
+  // Log a sent email into the candidate's distributions[step] timeline
+  async function logEmail(c, step, entry) {
+    const dist = c.distributions ?? {};
+    const distributions = { ...dist, [step]: [...(dist[step] ?? []), entry] };
+    await updateCandidate(c.id, { distributions });
+  }
+
   const sectionDefs = [
     { key: 'open',       title: '🔍 Open Position',        sub: 'Sourcing · ยังไม่มีผู้สมัคร · Step 1–5' },
     { key: 'onboarding', title: '✍️ Process รับเข้าทำงาน',  sub: 'ได้ผู้สมัครแล้ว · Step 6–7' },
@@ -498,6 +505,7 @@ export default function App() {
           onDropCandidate={() => dropCandidate(opened)}
           onCancelPosition={() => cancelPosition(opened)}
           onSaveDoc={(step, data, approvers) => saveDoc(opened, step, data, approvers)}
+          onLogEmail={(step, entry) => logEmail(opened, step, entry)}
           actor={actor}
         />
       )}
@@ -977,7 +985,7 @@ function CandidateNameForm({ initial, position, onClose, onSave }) {
 // Candidate detail
 // ============================================================================
 
-function CandidateDetail({ c, onClose, onEdit, onDelete, onAdvance, onApprove, onToggleDoc, onRecordMilestone, onProbationPassed, onEditName, onDropCandidate, onCancelPosition, onSaveDoc, actor }) {
+function CandidateDetail({ c, onClose, onEdit, onDelete, onAdvance, onApprove, onToggleDoc, onRecordMilestone, onProbationPassed, onEditName, onDropCandidate, onCancelPosition, onSaveDoc, onLogEmail, actor }) {
   const status = deriveStatus(c);
   const documents = c.documents?.length ? c.documents : DOCUMENT_TEMPLATE.map((d) => ({ ...d, received: false, receivedDate: null }));
   const probation = c.probation ?? {};
@@ -985,6 +993,7 @@ function CandidateDetail({ c, onClose, onEdit, onDelete, onAdvance, onApprove, o
   const daysInProbation = c.current_step === TOTAL_STEPS ? daysBetween(probationStart, today()) : 0;
   const [docForm, setDocForm] = useState(null); // step number for create/edit form
   const [docView, setDocView] = useState(null); // step number for view/print
+  const [emailStep, setEmailStep] = useState(null); // step number for email composer
   const hasName = !!c.name?.trim();
   const title = hasName ? c.name : c.position;
   const subtitle = hasName ? `${c.position} · ${c.department}` : `${c.department} · ${c.type === 'replacement' ? 'ทดแทนคนลาออก' : 'อัตราใหม่'}`;
@@ -1101,6 +1110,44 @@ function CandidateDetail({ c, onClose, onEdit, onDelete, onAdvance, onApprove, o
           })}
         </div>
       </Section>
+
+      {/* Email (ส่งอีเมลจากระบบ ผ่านกล่องกลาง HR) */}
+      <Section icon={Mail} title="อีเมล (Email)" subtitle={`ส่งจาก ${HR_EMAIL}`}>
+        {(() => {
+          const sent = c.distributions?.[c.current_step] ?? [];
+          return (
+            <div className="space-y-2">
+              <div className="flex items-center gap-2 flex-wrap">
+                <button onClick={() => setEmailStep(c.current_step)} className="text-xs inline-flex items-center gap-1.5 bg-sky-600 hover:bg-sky-700 text-white px-3 py-1.5 rounded-lg">
+                  <Send className="w-3.5 h-3.5" /> ส่งอีเมล (Step {c.current_step})
+                </button>
+                <span className="text-[11px] text-slate-400">ระบบเติมหัวเรื่อง/เนื้อหาให้ตาม step · แก้ไขผู้รับ/ข้อความได้ก่อนส่ง</span>
+              </div>
+              {sent.length > 0 && (
+                <ul className="text-[11px] text-slate-600 space-y-1">
+                  {sent.map((e, i) => (
+                    <li key={i} className="flex items-center gap-2">
+                      <span className="text-emerald-600">✓</span>
+                      <span className="flex-1 truncate">{e.subject} → {e.to}</span>
+                      <span className="text-slate-400 whitespace-nowrap">{fmtDate(e.sentAt)} · {e.by}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          );
+        })()}
+      </Section>
+
+      {emailStep != null && (
+        <EmailComposer
+          candidate={c}
+          step={emailStep}
+          actor={actor}
+          onClose={() => setEmailStep(null)}
+          onSent={(entry) => { onLogEmail(emailStep, entry); setEmailStep(null); }}
+        />
+      )}
 
       {docForm === 1 && (
         <ManpowerRequestForm
@@ -2033,5 +2080,65 @@ function ProbationEvalDoc({ data, candidate }) {
       <SignatureBlocks labels={[{ th: 'ผู้ประเมินหลัก', en: 'Primary Evaluator' }, { th: 'พนักงาน', en: 'Employee' }, { th: 'HR Manager', en: 'Approved by' }]} />
       <div style={{ fontSize: '9px', color: '#94a3b8', marginTop: '12px', textAlign: 'center' }}>สร้างโดยระบบ Recruitment 120 Days · JIANCHA GROUP · {fmtDate(todayISO())}</div>
     </div>
+  );
+}
+
+// ============================================================================
+// Email composer (sends via M365 Edge Function, from central HR mailbox)
+// ============================================================================
+
+function emailTemplate(step, c) {
+  const pos = c.position;
+  const name = c.name || '(ผู้สมัคร)';
+  const sign = `\n\nBest regards,\nHR Team · JIAN CHA Co., Ltd.\n${HR_EMAIL}`;
+  const apprEmails = (c.approval_workflows?.[step]?.approvers || []).map((a) => a.email).filter(Boolean).join(', ');
+  const T = {
+    1: { to: apprEmails, subject: `Approval Required: Open Position - ${pos} (${c.department})`, body: `Dear Approver,\n\nPlease review and approve the Manpower Requisition for the position "${pos}" (${c.department}).${sign}` },
+    3: { to: '', subject: `Candidate Profile for review: ${pos}`, body: `Dear Hiring Manager,\n\nPlease find the shortlisted candidate(s) for ${pos} (${c.department}) for your review.${sign}` },
+    4: { to: '', subject: `Interview Invitation: ${pos} - JIAN CHA Co., Ltd.`, body: `Dear Khun ${name},\n\nWe are pleased to invite you to an interview for the position of ${pos}.\n\nDate & Time: ____________\nFormat: ____________\nVenue: ____________\n\nKindly confirm your attendance by replying to this email.${sign}` },
+    5: { to: '', subject: `Interview Scorecard: ${name} · ${pos}`, body: `Dear Evaluator,\n\nPlease complete the interview evaluation (scorecard) for ${name} — ${pos} (${c.department}).${sign}` },
+    6: { to: apprEmails, subject: `Approval Required: Hire ${name} - ${pos}`, body: `Dear Approver,\n\nPlease review and approve the Recruitment Approval for ${name} — ${pos} (${c.department}).${sign}` },
+    7: { to: '', subject: `Pre-Boarding Documents: ${pos} (JIAN CHA)`, body: `Dear Khun ${name},\n\nCongratulations on joining JIAN CHA Co., Ltd. Please prepare and submit your pre-boarding documents.${sign}` },
+    8: { to: '', subject: `Probation Evaluation: ${name} (Day 30/60/90)`, body: `Dear Evaluator,\n\nPlease complete the probation evaluation for ${name} — ${pos} (${c.department}).${sign}` }
+  };
+  return T[step] || { to: '', subject: `${pos} - JIAN CHA HR`, body: `Dear Sir/Madam,${sign}` };
+}
+
+function EmailComposer({ candidate, step, actor, onClose, onSent }) {
+  const tpl = emailTemplate(step, candidate);
+  const [to, setTo] = useState(tpl.to);
+  const [cc, setCc] = useState('');
+  const [subject, setSubject] = useState(tpl.subject);
+  const [body, setBody] = useState(tpl.body);
+  const [busy, setBusy] = useState(false);
+  async function send() {
+    const toList = to.split(/[,;\s]+/).map((s) => s.trim()).filter(Boolean);
+    if (!toList.length) { alert('กรุณากรอกอีเมลผู้รับ (To)'); return; }
+    setBusy(true);
+    try {
+      await sendEmail({ to: toList, cc: cc.split(/[,;\s]+/).map((s) => s.trim()).filter(Boolean), subject, body });
+      onSent({ to, subject, sentAt: new Date().toISOString(), by: actor });
+      alert('ส่งอีเมลเรียบร้อย ✓');
+    } catch (e) {
+      setBusy(false);
+      alert('ส่งอีเมลไม่สำเร็จ:\n' + (e?.message || e) + '\n\nหมายเหตุ: ต้องตั้งค่า Microsoft 365 + deploy Edge Function "send-email" ก่อน (ดู EMAIL_SETUP_M365.md)');
+    }
+  }
+  return (
+    <Modal title="ส่งอีเมล" subtitle={`Step ${step} · ส่งจาก ${HR_EMAIL}`} onClose={onClose} wide>
+      <div className="space-y-3">
+        <div className="text-[11px] text-slate-500 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">📤 From: <b>{HR_EMAIL}</b></div>
+        <Field label="ถึง (To) — คั่นหลายคนด้วย ,"><input className="input" value={to} onChange={(e) => setTo(e.target.value)} placeholder="name@example.com" /></Field>
+        <Field label="สำเนา (Cc) — ถ้ามี"><input className="input" value={cc} onChange={(e) => setCc(e.target.value)} placeholder="cc@example.com" /></Field>
+        <Field label="หัวเรื่อง (Subject)"><input className="input" value={subject} onChange={(e) => setSubject(e.target.value)} /></Field>
+        <Field label="เนื้อหา (Body)"><textarea rows={10} className="input" value={body} onChange={(e) => setBody(e.target.value)} /></Field>
+        <div className="flex justify-end gap-2 pt-1">
+          <button onClick={onClose} className="px-3 py-2 text-sm text-slate-600 hover:text-slate-900">ยกเลิก</button>
+          <button onClick={send} disabled={busy} className="px-4 py-2 text-sm bg-sky-600 hover:bg-sky-700 disabled:opacity-50 text-white rounded-lg inline-flex items-center gap-1.5">
+            {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />} ส่งอีเมล
+          </button>
+        </div>
+      </div>
+    </Modal>
   );
 }
