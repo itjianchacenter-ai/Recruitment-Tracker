@@ -1,0 +1,18 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+}
+
+html, body, #root {
+  height: 100%;
+}
+
+body {
+  font-family: 'IBM Plex Sans Thai', Inter, system-ui, sans-serif;
+  background: #f6f7fb;
+  color: #111827;
+  -webkit-font-smoothing: antialiased;
+}
