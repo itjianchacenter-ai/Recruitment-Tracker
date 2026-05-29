@@ -1,0 +1,21 @@
+# Caddy site block for recruitment.jchr-global.com (single-domain: SPA + Supabase API).
+# API paths are reverse-proxied to the self-hosted Supabase gateway (Kong) on
+# 127.0.0.1:8000; everything else is served as the static SPA. Same-origin, so
+# no CORS. Replaces the old static-only block in /etc/caddy/Caddyfile.
+recruitment.jchr-global.com {
+	encode gzip zstd
+	@api path /rest/* /auth/* /realtime/* /storage/* /functions/* /graphql/*
+	handle @api {
+		reverse_proxy 127.0.0.1:8000
+	}
+	handle {
+		root * /var/www/recruitment/dist
+		try_files {path} /index.html
+		file_server
+	}
+	header {
+		X-Frame-Options "SAMEORIGIN"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+	}
+}

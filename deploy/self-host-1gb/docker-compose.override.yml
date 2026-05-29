@@ -1,0 +1,51 @@
+# Low-RAM trim for the 1GB jchr-global droplet.
+# Goal: run ONLY the core Supabase services the Recruitment app needs, and
+# drop the heavy ones (studio/analytics/vector/supavisor/functions/imgproxy).
+#
+# Strategy:
+#  - !reset / !override rewrite the inherited depends_on so kept services no
+#    longer wait on analytics/vector (which we never start).
+#  - Start only the named services:  docker compose up -d db db-config kong \
+#        auth rest realtime storage meta
+#    (un-named services are never created.)
+#  - mem_limit caps each container so a spike is OOM-killed inside its cgroup
+#    instead of taking down the co-hosted jchr production app.
+#  - Kong is bound to 127.0.0.1 only; Caddy reverse-proxies to it.
+#
+# Requires Docker Compose v2.24+ (!reset / !override). Droplet has v5.x.
+services:
+  db:
+    depends_on: !reset null
+    mem_limit: 420m
+  kong:
+    depends_on: !reset null
+    ports: !override
+      - "127.0.0.1:8000:8000"
+    mem_limit: 200m
+  auth:
+    depends_on: !override
+      db:
+        condition: service_healthy
+    mem_limit: 110m
+  rest:
+    depends_on: !override
+      db:
+        condition: service_healthy
+    mem_limit: 110m
+  realtime:
+    depends_on: !override
+      db:
+        condition: service_healthy
+    mem_limit: 250m
+  storage:
+    depends_on: !override
+      db:
+        condition: service_healthy
+      rest:
+        condition: service_started
+    mem_limit: 150m
+  meta:
+    depends_on: !override
+      db:
+        condition: service_healthy
+    mem_limit: 110m
