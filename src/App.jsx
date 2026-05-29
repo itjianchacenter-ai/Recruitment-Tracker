@@ -5101,11 +5101,6 @@ ${HR_EMAIL}`;
           {role === 'hr'        && <HRDashboard user={user} candidates={candidates} setCandidates={setCandidates} onRoleSwitch={openRoles} />}
           {role === 'approver'  && <ApproverView onRoleSwitch={openRoles} />}
           {showRoles && <RoleSwitcher currentRole={role} onPick={pickRole} />}
-          <button onClick={openRoles} title="เปลี่ยนมุมมอง / เปิดงานของฉัน"
-            style={{ position:'fixed', right:16, bottom:16, zIndex:90 }}
-            className="bg-slate-900 hover:bg-slate-800 text-white text-xs font-medium px-4 py-2.5 rounded-full shadow-lg ibtn">
-            🎭 เปลี่ยนมุมมอง
-          </button>
           <button onClick={handleSignOut} title="ออกจากระบบ"
             style={{ position:'fixed', left:12, bottom:12, zIndex:80 }}
             className="bg-white border border-slate-200 hover:border-slate-300 text-slate-600 text-xs font-medium px-3 py-2 rounded-lg shadow ibtn">
