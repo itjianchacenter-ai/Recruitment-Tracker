@@ -45,8 +45,8 @@ body {
 @media print {
   body { background: #fff; }
   body * { visibility: hidden; }
-  .print-area, .print-area * { visibility: visible; }
-  .print-area { position: absolute; left: 0; top: 0; width: 100%; padding: 0 !important; }
+  .print-document, .print-document * { visibility: visible; }
+  .print-document { position: absolute; left: 0; top: 0; width: 100%; padding: 0 !important; }
   .no-print { display: none !important; }
   .print-document { box-shadow: none !important; border: none !important; }
 }
