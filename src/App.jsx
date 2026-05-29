@@ -15,12 +15,12 @@ import {
 // ============================================================================
 
 const STEPS = [
-  { id: 1, name: 'Requisition Approval',       thai: 'ขออนุมัติอัตรากำลังคน',   owner: 'Dept Head + HR',        note: 'สร้างเอกสาร + เซ็นอนุมัติตามลำดับ' },
-  { id: 2, name: 'Sourcing',                   thai: 'ดำเนินการสรรหา',          owner: 'HR Recruiter',          note: 'นับถอยหลัง 30 วัน' },
-  { id: 3, name: 'Screening & Shortlist',      thai: 'คัดกรอง + ส่ง shortlist', owner: 'HR Recruiter',          note: 'อัปโหลด resume + อีเมลต้นสังกัด' },
-  { id: 4, name: 'Interview Evaluation',       thai: 'ประเมินสัมภาษณ์',         owner: 'Hiring Mgr → HR',       note: 'scorecard + ใส่ชื่อผู้ผ่าน' },
-  { id: 5, name: 'Offer Approval & Extension', thai: 'ขออนุมัติรับ + ส่ง Offer', owner: 'HR + Approvers',        note: 'สร้างเอกสาร + เซ็นอนุมัติตามลำดับ' },
-  { id: 6, name: 'Probation Period',           thai: 'ทดลองงาน 120 วัน',        owner: 'Hiring Mgr · HR',       note: 'ประเมิน Day 30/60/90 · ผ่านโปร Day 119' }
+  { id: 1, name: 'Requisition Approval',       thai: 'ขออนุมัติอัตรากำลังคน',    owner: 'Dept Head + HR',        note: 'สร้างเอกสาร + อนุมัติตามลำดับ' },
+  { id: 2, name: 'Sourcing',                   thai: 'ดำเนินการสรรหา',           owner: 'HR Recruiter',          note: 'นับถอยหลัง 30 วัน' },
+  { id: 3, name: 'Screening & Shortlist',      thai: 'Screening + ส่ง shortlist', owner: 'HR Recruiter',          note: 'อัปโหลด + แจ้งผู้จัดการ + timeline' },
+  { id: 4, name: 'Interview Evaluation',       thai: 'ประเมินสัมภาษณ์',          owner: 'Hiring Mgr → HR',       note: 'สร้าง scorecard + มอบหมายผู้ประเมิน' },
+  { id: 5, name: 'Offer Approval & Extension', thai: 'ขออนุมัติรับ + ส่ง Offer',  owner: 'HR + Approvers',        note: 'สร้างเอกสาร + อนุมัติตามลำดับ' },
+  { id: 6, name: 'Probation Period',           thai: 'ทดลองงาน 120 วัน',         owner: 'Hiring Mgr · HR follow', note: 'ประเมิน Day 30 / 60 / 90 · ผ่านโปร Day 119' }
 ];
 const TOTAL_STEPS = STEPS.length;
 const APPROVAL_STEPS = [1, 5]; // steps ที่ต้องเซ็นอนุมัติก่อนผ่าน
@@ -188,10 +188,9 @@ function progressPercent(c) {
 }
 
 function bucketOf(c) {
-  if (c.status === 'passed') return 'probation';
-  if (c.current_step <= 4)   return 'open';
-  if (c.current_step <= 5)   return 'onboarding';
-  return 'probation';
+  if (c.current_step === TOTAL_STEPS || c.status === 'passed') return 'probation';
+  if (c.name) return 'onboarding';
+  return 'open';
 }
 
 const toneClasses = {
@@ -407,9 +406,9 @@ export default function App() {
   }
 
   const sectionDefs = [
-    { key: 'open',       title: '🔍 Open Position',        sub: 'Sourcing · ยังไม่มีผู้สมัคร · Step 1–4' },
-    { key: 'onboarding', title: '✍️ Process รับเข้าทำงาน',  sub: 'ได้ผู้สมัครแล้ว · Step 5' },
-    { key: 'probation',  title: '🛡 Process Probation',     sub: 'ทดลองงาน 120 วัน · Step 6 + ผ่านโปร' }
+    { key: 'open',       title: '🔍 Open Position',        sub: 'ยังไม่มีผู้สมัคร · Step 1–4 (Requisition → Sourcing → Screening → Interview Evaluation)' },
+    { key: 'onboarding', title: '✍️ Process รับเข้าทำงาน',  sub: 'ได้ผู้สมัครแล้ว · Step 4–5 (Interview Evaluation → Offer Approval)' },
+    { key: 'probation',  title: '🛡 Process Probation',     sub: 'ทดลองงาน 120 วัน · Step 6 + ผ่านโปรแล้ว' }
   ];
 
   async function signMyApproval(candidate, step, signatureData, myEmail) {
