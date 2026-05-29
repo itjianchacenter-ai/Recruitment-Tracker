@@ -28,6 +28,14 @@ export function actorFromSession(session) {
   const email = session?.user?.email || '';
   return email ? email.split('@')[0].toUpperCase() : 'HR';
 }
+// role: 'admin' (ฝั่ง HR/แอดมิน) | 'user' (ผู้อนุมัติ/ผู้ประเมิน → งานของฉัน)
+// อ่านจาก user metadata ใน Supabase · default 'admin' = fail-safe (ไม่ล็อก HR เดิมหลุดระบบ)
+// ตั้งให้ผู้ใช้เป็น user: ใน Supabase → Auth → ผู้ใช้ → User Metadata { "role": "user" }
+export function roleFromSession(session) {
+  const u = session?.user;
+  const r = u?.app_metadata?.role || u?.user_metadata?.role;
+  return r === 'user' ? 'user' : 'admin';
+}
 
 // actor used for audit / created_by / updated_by — derived from logged-in user
 let _actor = 'HR';

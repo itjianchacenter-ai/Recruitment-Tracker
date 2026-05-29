@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, Fragment } from 'react';
+import { useEffect, useMemo, useState, useRef, Fragment } from 'react';
 import {
   Plus, Search, Users, CheckCircle2, AlertTriangle, AlertCircle, ClipboardCheck,
   X, ChevronRight, Calendar, Trash2, Edit2, FileText, FileCheck, Briefcase,
@@ -7,7 +7,7 @@ import {
 } from 'lucide-react';
 import {
   listCandidates, createCandidate, updateCandidate, deleteCandidate,
-  subscribeCandidates, signIn, signOut, getSession, onAuthChange, actorFromSession, sendEmail
+  subscribeCandidates, signIn, signOut, getSession, onAuthChange, actorFromSession, roleFromSession, sendEmail
 } from './lib/supabase.js';
 
 // ============================================================================
@@ -219,6 +219,7 @@ export default function App() {
   const [editingName, setEditingName] = useState(null);
   const [session, setSession]       = useState(undefined); // undefined=checking · null=logged out · obj=logged in
   const actor = actorFromSession(session);
+  const role  = roleFromSession(session);
 
   // Auth: check session + subscribe to changes
   useEffect(() => {
@@ -416,11 +417,45 @@ export default function App() {
     { key: 'probation',  title: '🛡 Process Probation',     sub: 'ทดลองงาน 120 วัน · Step 8 + ผ่านโปร' }
   ];
 
+  async function signMyApproval(candidate, step, signatureData, myEmail) {
+    const wfs = { ...(candidate.approval_workflows || {}) };
+    const wf  = { ...(wfs[step] || {}) };
+    let signed = false;
+    let approvers = (wf.approvers || []).map((a) => {
+      if (!signed && (a.email || '').toLowerCase() === (myEmail || '').toLowerCase() && a.status === 'pending') {
+        signed = true;
+        return { ...a, status: 'approved', signedAt: new Date().toISOString(), signature_data: signatureData };
+      }
+      return a;
+    });
+    if (!signed) return;
+    const nextIdx = approvers.findIndex((a) => a.status === 'waiting');
+    if (nextIdx >= 0) approvers = approvers.map((a, i) => i === nextIdx ? { ...a, status: 'pending' } : a);
+    const allApproved = approvers.every((a) => a.status === 'approved');
+    wfs[step] = { ...wf, approvers, status: allApproved ? 'completed' : 'in_progress' };
+    await updateCandidate(candidate.id, { approval_workflows: wfs });
+  }
+
+  async function fillEvalDoc(candidate, step, data) {
+    const generated_docs = { ...(candidate.generated_docs ?? {}), [step]: { data, createdAt: new Date().toISOString(), createdBy: actor, filledBy: actor } };
+    await updateCandidate(candidate.id, { generated_docs });
+  }
+  async function setShortlistVerdict(candidate, itemId, verdict) {
+    const shortlist = (candidate.shortlist ?? []).map((it) => it.id === itemId ? { ...it, verdict, verdictAt: new Date().toISOString(), verdictBy: actor } : it);
+    await updateCandidate(candidate.id, { shortlist });
+  }
+
   if (session === undefined) {
     return <div className="min-h-screen grid place-items-center text-slate-400"><Loader2 className="w-6 h-6 animate-spin" /></div>;
   }
   if (!session) {
     return <Login />;
+  }
+  if (role !== 'admin') {
+    return <MyWorkPortal candidates={candidates} email={session.user?.email || ''} actor={actor} loading={loading} onSignOut={signOut}
+             onSign={(c, step, sig) => signMyApproval(c, step, sig, session.user?.email || '')}
+             onFillEval={(c, step, data) => fillEvalDoc(c, step, data)}
+             onShortlistVerdict={(c, itemId, v) => setShortlistVerdict(c, itemId, v)} />;
   }
 
   return (
@@ -518,6 +553,240 @@ export default function App() {
           onSave={async (name) => { await setCandidateName(editingName, name); setEditingName(null); }}
         />
       )}
+    </div>
+  );
+}
+
+function typedSignature(name) {
+  const svg = "<svg xmlns='http://www.w3.org/2000/svg' width='260' height='64'><text x='12' y='44' font-family='Segoe Script, Brush Script MT, cursive' font-size='34' fill='#0f172a'>" + (name || '') + "</text></svg>";
+  return 'data:image/svg+xml,' + encodeURIComponent(svg);
+}
+
+function emailOf(e) { return (e?.to || e?.email || e?.recipient || (typeof e === 'string' ? e : '') || '').toString().toLowerCase(); }
+function distHasMe(c, step, me) { return (c.distributions?.[step] || []).some((e) => emailOf(e).includes(me)); }
+function sentToHasMe(sentTo, me) { return Array.isArray(sentTo) && sentTo.some((s) => emailOf(s).includes(me)); }
+
+function SignPad({ onChange }) {
+  const [mode, setMode] = useState('draw');
+  const [typed, setTyped] = useState('');
+  const canvasRef = useRef(null);
+  const drawing = useRef(false);
+  const getCtx = () => canvasRef.current?.getContext('2d');
+  const posOf = (e) => { const r = canvasRef.current.getBoundingClientRect(); const t = e.touches ? e.touches[0] : e; return { x: t.clientX - r.left, y: t.clientY - r.top }; };
+  const start = (e) => { drawing.current = true; const ctx = getCtx(); const p = posOf(e); ctx.beginPath(); ctx.moveTo(p.x, p.y); };
+  const draw = (e) => { if (!drawing.current) return; e.preventDefault(); const ctx = getCtx(); const p = posOf(e); ctx.lineWidth = 2.5; ctx.lineCap = 'round'; ctx.strokeStyle = '#0f172a'; ctx.lineTo(p.x, p.y); ctx.stroke(); };
+  const stop = () => { if (!drawing.current) return; drawing.current = false; onChange(canvasRef.current.toDataURL('image/png')); };
+  const clearCanvas = () => { const cv = canvasRef.current; if (cv) cv.getContext('2d').clearRect(0, 0, cv.width, cv.height); onChange(null); };
+  const onFile = (e) => { const f = e.target.files?.[0]; if (!f) return; const rd = new FileReader(); rd.onload = () => onChange(rd.result); rd.readAsDataURL(f); };
+  const onTyped = (v) => { setTyped(v); onChange(v.trim() ? typedSignature(v.trim()) : null); };
+  const Tab = ({ id, label }) => (
+    <button type="button" onClick={() => { setMode(id); onChange(null); }} className={`text-xs px-3 py-1.5 rounded-lg ${mode === id ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-600'}`}>{label}</button>
+  );
+  return (
+    <div className="space-y-2">
+      <div className="flex gap-2"><Tab id="draw" label="✍️ วาด" /><Tab id="upload" label="📤 อัปโหลด" /><Tab id="type" label="⌨️ พิมพ์" /></div>
+      {mode === 'draw' && (
+        <div>
+          <canvas ref={canvasRef} width={400} height={120} className="border-2 border-dashed border-slate-300 rounded-lg bg-white w-full touch-none"
+            onMouseDown={start} onMouseMove={draw} onMouseUp={stop} onMouseLeave={stop} onTouchStart={start} onTouchMove={draw} onTouchEnd={stop} />
+          <button type="button" onClick={clearCanvas} className="text-xs text-slate-500 hover:text-slate-800 mt-1">ล้างลายเซ็น</button>
+        </div>
+      )}
+      {mode === 'upload' && (<input type="file" accept="image/*" onChange={onFile} className="text-xs" />)}
+      {mode === 'type' && (
+        <div>
+          <input className="input w-full" value={typed} onChange={(e) => onTyped(e.target.value)} placeholder="พิมพ์ชื่อ-นามสกุล" />
+          {typed.trim() && <img src={typedSignature(typed.trim())} alt="sig" style={{ height: 40 }} className="mt-2" />}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MyWorkPortal({ candidates, email, actor, loading, onSignOut, onSign, onFillEval, onShortlistVerdict }) {
+  const myEmail = (email || '').toLowerCase();
+  const [signing, setSigning]   = useState(null);
+  const [evalForm, setEvalForm] = useState(null);
+  const [viewDoc, setViewDoc]   = useState(null);
+  const [sigData, setSigData]   = useState(null);
+  const [busy, setBusy]         = useState(false);
+
+  const signTasks = (candidates || []).flatMap((c) => {
+    const wfs = c.approval_workflows || {};
+    return Object.entries(wfs).flatMap(([step, wf]) => {
+      const mine = (wf.approvers || []).find((a) => (a.email || '').toLowerCase() === myEmail);
+      return mine ? [{ c, step, wf, mine }] : [];
+    });
+  });
+  const signPending = signTasks.filter((t) => t.mine.status === 'pending');
+  const signOther   = signTasks.filter((t) => t.mine.status !== 'pending');
+
+  const evalTasks = myEmail ? (candidates || []).flatMap((c) =>
+    ['5', '8'].flatMap((step) => (distHasMe(c, step, myEmail) && !c.generated_docs?.[step]) ? [{ c, step }] : [])
+  ) : [];
+  const evalDone = myEmail ? (candidates || []).flatMap((c) =>
+    ['5', '8'].flatMap((step) => (distHasMe(c, step, myEmail) && c.generated_docs?.[step]) ? [{ c, step }] : [])
+  ) : [];
+
+  const reviewTasks = myEmail ? (candidates || []).flatMap((c) => {
+    const assigned = distHasMe(c, '3', myEmail) || (c.shortlist || []).some((it) => sentToHasMe(it.sentTo, myEmail));
+    const items = (c.shortlist || []).filter((it) => !it.verdict);
+    return (assigned && items.length) ? [{ c, items }] : [];
+  }) : [];
+
+  const totalPending = signPending.length + evalTasks.length + reviewTasks.reduce((n, r) => n + r.items.length, 0);
+
+  async function doSign() {
+    if (!sigData || !signing) return;
+    setBusy(true);
+    try { await onSign(signing.c, signing.step, sigData); setSigning(null); setSigData(null); }
+    catch (e) { alert('ลงนามไม่สำเร็จ: ' + (e?.message || e)); }
+    finally { setBusy(false); }
+  }
+  async function doVerdict(c, itemId, verdict) {
+    try { await onShortlistVerdict(c, itemId, verdict); }
+    catch (e) { alert('บันทึกผลไม่สำเร็จ: ' + (e?.message || e)); }
+  }
+
+  const FormComp = evalForm ? (evalForm.step === '5' ? ScorecardForm : ProbationEvalForm) : null;
+
+  function renderDoc(vd) {
+    const c = vd.c, step = vd.step, data = c.generated_docs?.[step]?.data;
+    if (step === '1') return <ManpowerRequestDoc data={data} candidate={c} workflow={c.approval_workflows?.['1']} />;
+    if (step === '6') return <ApprovalDoc data={data} candidate={c} workflow={c.approval_workflows?.['6']} />;
+    if (step === '5') return <ScorecardDoc data={data} candidate={c} />;
+    if (step === '8') return <ProbationEvalDoc data={data} candidate={c} />;
+    return <div className="text-sm text-slate-500">ไม่มีเอกสาร</div>;
+  }
+
+  return (
+    <div className="min-h-screen bg-slate-50">
+      <header className="bg-white border-b border-slate-200">
+        <div className="max-w-3xl mx-auto px-4 py-3 flex items-center justify-between">
+          <div className="flex items-center gap-3 min-w-0">
+            <JianchaLogo size={30} />
+            <div className="min-w-0">
+              <div className="text-sm font-semibold text-slate-900">งานของฉัน</div>
+              <div className="text-[11px] text-slate-500 truncate">{email}</div>
+            </div>
+          </div>
+          <button onClick={onSignOut} className="text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-1.5 rounded-lg whitespace-nowrap">ออกจากระบบ</button>
+        </div>
+      </header>
+      <main className="max-w-3xl mx-auto px-4 py-6 space-y-6">
+        {loading ? (
+          <div className="flex items-center justify-center h-40 text-slate-500"><Loader2 className="w-5 h-5 animate-spin mr-2" /> กำลังโหลดงาน…</div>
+        ) : (
+          <>
+            {totalPending === 0 && evalDone.length === 0 && signOther.length === 0 && (
+              <div className="text-sm text-slate-400 border border-dashed border-slate-300 rounded-xl p-8 text-center">ยังไม่มีงานที่รอคุณ</div>
+            )}
+
+            {signPending.length > 0 && (
+              <section>
+                <h2 className="text-sm font-semibold text-slate-800 mb-2">✍️ รอลงนาม ({signPending.length})</h2>
+                <div className="space-y-2">{signPending.map((t, i) => (
+                  <PortalRow key={'s' + i} c={t.c} step={t.step} role={t.mine.role} highlight actionLabel="ตรวจ + ลงนาม" onAction={() => setSigning(t)} />
+                ))}</div>
+              </section>
+            )}
+
+            {evalTasks.length > 0 && (
+              <section>
+                <h2 className="text-sm font-semibold text-slate-800 mb-2">📝 รอประเมิน ({evalTasks.length})</h2>
+                <div className="space-y-2">{evalTasks.map((t, i) => (
+                  <PortalRow key={'e' + i} c={t.c} step={t.step} role={t.step === '5' ? 'ประเมินสัมภาษณ์' : 'ประเมินทดลองงาน'} highlight actionLabel="เปิดฟอร์มประเมิน" onAction={() => setEvalForm(t)} />
+                ))}</div>
+              </section>
+            )}
+
+            {reviewTasks.length > 0 && (
+              <section>
+                <h2 className="text-sm font-semibold text-slate-800 mb-2">👥 พิจารณา Shortlist (Step 3)</h2>
+                <div className="space-y-3">{reviewTasks.map((r, i) => (
+                  <div key={'r' + i} className="bg-white border border-slate-200 rounded-xl p-3">
+                    <div className="text-sm font-medium text-slate-900 mb-2">{r.c.position} · แผนก {r.c.department || '—'}</div>
+                    <div className="space-y-2">{r.items.map((it) => (
+                      <div key={it.id} className="flex items-center justify-between gap-2 bg-slate-50 border border-slate-200 rounded-lg p-2 flex-wrap">
+                        <span className="text-sm flex-1 min-w-0 truncate">👤 {it.name || '(ไม่ระบุชื่อ)'}</span>
+                        <div className="flex items-center gap-2">
+                          <button onClick={() => doVerdict(r.c, it.id, 'pass')} className="text-xs bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1 rounded-lg">✓ ผ่าน</button>
+                          <button onClick={() => doVerdict(r.c, it.id, 'reject')} className="text-xs border-2 border-rose-300 text-rose-700 hover:bg-rose-50 px-3 py-1 rounded-lg">✕ ไม่ผ่าน</button>
+                        </div>
+                      </div>
+                    ))}</div>
+                  </div>
+                ))}</div>
+              </section>
+            )}
+
+            {(signOther.length > 0 || evalDone.length > 0) && (
+              <section>
+                <h2 className="text-sm font-semibold text-slate-800 mb-2">📋 งานที่ดำเนินการแล้ว ({signOther.length + evalDone.length})</h2>
+                <div className="space-y-2">
+                  {signOther.map((t, i) => (
+                    <PortalRow key={'o' + i} c={t.c} step={t.step} role={t.mine.role} status={t.mine.status} onView={() => setViewDoc({ c: t.c, step: t.step })} />
+                  ))}
+                  {evalDone.map((t, i) => (
+                    <PortalRow key={'d' + i} c={t.c} step={t.step} role={t.step === '5' ? 'ประเมินสัมภาษณ์' : 'ประเมินทดลองงาน'} status="done" onView={() => setViewDoc({ c: t.c, step: t.step })} />
+                  ))}
+                </div>
+              </section>
+            )}
+          </>
+        )}
+      </main>
+
+      {signing && (
+        <div className="fixed inset-0 z-40 bg-slate-900/40 grid place-items-center p-4" onClick={() => !busy && setSigning(null)}>
+          <div className="bg-white rounded-2xl shadow-xl border border-slate-200 w-full max-w-md p-5" onClick={(e) => e.stopPropagation()}>
+            <div className="text-base font-semibold text-slate-900 mb-1">ตรวจเอกสาร + ลงนาม</div>
+            <div className="text-xs text-slate-500 mb-3">{signing.c.position}{signing.c.name ? ` · ${signing.c.name}` : ''} · Step {signing.step} · บทบาท: {signing.mine.role || '—'}</div>
+            <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 text-xs text-slate-600 mb-3">กรุณาตรวจสอบเอกสารก่อนลงนาม · เมื่อลงนามแล้วระบบจะบันทึกลายเซ็น + วันเวลา และส่งต่อผู้อนุมัติลำดับถัดไปอัตโนมัติ</div>
+            <div className="text-xs font-medium text-slate-600 mb-1">ลายเซ็น (วาด / อัปโหลด / พิมพ์)</div>
+            <SignPad onChange={setSigData} />
+            <div className="flex justify-end gap-2 mt-4">
+              <button disabled={busy} onClick={() => { setSigning(null); setSigData(null); }} className="px-3 py-2 text-sm text-slate-600 hover:text-slate-900">ยกเลิก</button>
+              <button disabled={busy || !sigData} onClick={doSign} className={`px-4 py-2 text-sm rounded-lg text-white ${busy || !sigData ? 'bg-emerald-300' : 'bg-emerald-600 hover:bg-emerald-700'}`}>{busy ? 'กำลังบันทึก…' : '✓ ลงนามและอนุมัติ'}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {evalForm && FormComp && (
+        <FormComp candidate={evalForm.c} user={{ name: actor }} onClose={() => setEvalForm(null)}
+          onSave={async (data) => { try { await onFillEval(evalForm.c, evalForm.step, data); setEvalForm(null); } catch (e) { alert('บันทึกไม่สำเร็จ: ' + (e?.message || e)); } }} />
+      )}
+
+      {viewDoc && (
+        <div className="fixed inset-0 z-40 bg-slate-900/40 overflow-y-auto p-2 sm:p-6" onClick={() => setViewDoc(null)}>
+          <div className="bg-white rounded-2xl shadow-xl border border-slate-200 w-full max-w-3xl mx-auto my-2 sm:my-8" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between p-4 border-b border-slate-100 sticky top-0 bg-white rounded-t-2xl">
+              <div className="text-base font-semibold text-slate-900">📄 เอกสารที่เสร็จแล้ว · Step {viewDoc.step}</div>
+              <button onClick={() => setViewDoc(null)} className="p-1 rounded-lg hover:bg-slate-100 text-slate-500">✕</button>
+            </div>
+            <div className="p-6 sm:p-10 print-document">{renderDoc(viewDoc)}</div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PortalRow({ c, step, role, status, highlight, actionLabel, onAction, onView }) {
+  const statusLabel = status === 'approved' ? '✓ เซ็นแล้ว' : status === 'waiting' ? '○ รอคิว' : status === 'done' ? '✓ ประเมินแล้ว' : '';
+  const tone = (status === 'approved' || status === 'done') ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-500';
+  return (
+    <div className={`bg-white border rounded-xl p-3 flex items-center justify-between gap-3 ${highlight ? 'border-sky-300' : 'border-slate-200'}`}>
+      <div className="min-w-0">
+        <div className="text-sm font-medium text-slate-900 truncate">{c.position}{c.name ? ` · ${c.name}` : ''}</div>
+        <div className="text-[11px] text-slate-500">แผนก {c.department || '—'} · Step {step} · บทบาท: {role || '—'}</div>
+      </div>
+      <div className="flex items-center gap-2 whitespace-nowrap">
+        {statusLabel && <span className={`text-xs px-2 py-1 rounded-lg ${tone}`}>{statusLabel}</span>}
+        {onView && <button onClick={onView} className="text-xs bg-slate-900 hover:bg-slate-800 text-white px-3 py-1.5 rounded-lg">👁 ดูเอกสาร</button>}
+        {onAction && <button onClick={onAction} className="text-xs bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-lg">{actionLabel}</button>}
+      </div>
     </div>
   );
 }
@@ -1110,6 +1379,24 @@ function CandidateDetail({ c, onClose, onEdit, onDelete, onAdvance, onApprove, o
           })}
         </div>
       </Section>
+
+      {/* Shortlist + ผลพิจารณาต้นสังกัด (Step 3) */}
+      {c.shortlist?.length > 0 && (
+        <Section icon={Users} title="Shortlist · ผลพิจารณาต้นสังกัด" subtitle="ผ่าน/ไม่ผ่าน รายผู้สมัคร (Step 3)">
+          <div className="space-y-2">
+            {c.shortlist.map((it) => (
+              <div key={it.id} className="flex items-center justify-between gap-2 bg-slate-50 border border-slate-200 rounded-lg p-2 flex-wrap">
+                <span className="text-sm flex-1 min-w-0 truncate">👤 {it.name || '(ไม่ระบุชื่อ)'}</span>
+                {it.verdict ? (
+                  <span className={`text-xs font-medium px-2.5 py-1 rounded-lg border ${it.verdict === 'pass' ? 'bg-emerald-100 text-emerald-800 border-emerald-300' : 'bg-rose-100 text-rose-700 border-rose-300'}`}>{it.verdict === 'pass' ? '✓ ผ่าน · ให้นัดสัมภาษณ์' : '✕ ไม่ผ่าน'}{it.verdictBy ? ` · ${it.verdictBy}` : ''}</span>
+                ) : (
+                  <span className="text-xs text-slate-400">⏳ รอต้นสังกัดพิจารณา</span>
+                )}
+              </div>
+            ))}
+          </div>
+        </Section>
+      )}
 
       {/* Email (ส่งอีเมลจากระบบ ผ่านกล่องกลาง HR) */}
       <Section icon={Mail} title="อีเมล (Email)" subtitle={`ส่งจาก ${HR_EMAIL}`}>
