@@ -11,21 +11,19 @@ import {
 } from './lib/supabase.js';
 
 // ============================================================================
-// Constants — 8-step workflow (ตรงกับ preview.html)
+// Constants — 6-step workflow (ตรงกับ preview.html)
 // ============================================================================
 
 const STEPS = [
   { id: 1, name: 'Requisition Approval',       thai: 'ขออนุมัติอัตรากำลังคน',   owner: 'Dept Head + HR',        note: 'สร้างเอกสาร + เซ็นอนุมัติตามลำดับ' },
   { id: 2, name: 'Sourcing',                   thai: 'ดำเนินการสรรหา',          owner: 'HR Recruiter',          note: 'นับถอยหลัง 30 วัน' },
   { id: 3, name: 'Screening & Shortlist',      thai: 'คัดกรอง + ส่ง shortlist', owner: 'HR Recruiter',          note: 'อัปโหลด resume + อีเมลต้นสังกัด' },
-  { id: 4, name: 'Interview Scheduling',       thai: 'นัดสัมภาษณ์',             owner: 'HR Recruiter',          note: 'อีเมลนัด + แนบไฟล์' },
-  { id: 5, name: 'Interview Evaluation',       thai: 'ประเมินสัมภาษณ์',         owner: 'Hiring Mgr → HR',       note: 'scorecard + ใส่ชื่อผู้ผ่าน' },
-  { id: 6, name: 'Offer Approval & Extension', thai: 'ขออนุมัติรับ + ส่ง Offer', owner: 'HR + Approvers',        note: 'สร้างเอกสาร + เซ็นอนุมัติตามลำดับ' },
-  { id: 7, name: 'Pre-Boarding Documents',     thai: 'ขอเอกสารเริ่มงาน',        owner: 'HR Recruiter',          note: 'ลิงก์ให้ผู้สมัครอัปโหลด' },
-  { id: 8, name: 'Probation Period',           thai: 'ทดลองงาน 120 วัน',        owner: 'Hiring Mgr · HR',       note: 'ประเมิน Day 30/60/90 · ผ่านโปร Day 119' }
+  { id: 4, name: 'Interview Evaluation',       thai: 'ประเมินสัมภาษณ์',         owner: 'Hiring Mgr → HR',       note: 'scorecard + ใส่ชื่อผู้ผ่าน' },
+  { id: 5, name: 'Offer Approval & Extension', thai: 'ขออนุมัติรับ + ส่ง Offer', owner: 'HR + Approvers',        note: 'สร้างเอกสาร + เซ็นอนุมัติตามลำดับ' },
+  { id: 6, name: 'Probation Period',           thai: 'ทดลองงาน 120 วัน',        owner: 'Hiring Mgr · HR',       note: 'ประเมิน Day 30/60/90 · ผ่านโปร Day 119' }
 ];
 const TOTAL_STEPS = STEPS.length;
-const APPROVAL_STEPS = [1, 6]; // steps ที่ต้องเซ็นอนุมัติก่อนผ่าน
+const APPROVAL_STEPS = [1, 5]; // steps ที่ต้องเซ็นอนุมัติก่อนผ่าน
 
 const DOCUMENT_TEMPLATE = [
   { key: 'id_card',      label: 'สำเนาบัตรประชาชน' },
@@ -65,12 +63,12 @@ const NECESSITY_OPTIONS = [
 
 const DOC_LABELS = {
   1: { name: 'Manpower Requisition Form',          thai: 'แบบฟอร์มขออนุมัติกำลังคน' },
-  5: { name: 'Interview Evaluation Form',          thai: 'แบบฟอร์มประเมินการสัมภาษณ์งาน' },
-  6: { name: 'Employee Recruitment Approval Form', thai: 'แบบฟอร์มขออนุมัติรับพนักงาน' },
-  8: { name: 'Probation Evaluation Form',          thai: 'แบบฟอร์มประเมินผลการทดลองงาน' }
+  4: { name: 'Interview Evaluation Form',          thai: 'แบบฟอร์มประเมินการสัมภาษณ์งาน' },
+  5: { name: 'Employee Recruitment Approval Form', thai: 'แบบฟอร์มขออนุมัติรับพนักงาน' },
+  6: { name: 'Probation Evaluation Form',          thai: 'แบบฟอร์มประเมินผลการทดลองงาน' }
 };
 
-// Step 5 — interview evaluation criteria + score definitions
+// Step 4 — interview evaluation criteria + score definitions
 const EVAL_CRITERIA = [
   { cat: '1. ด้านความพร้อมของผู้สมัคร', items: [
     { key: 'a1', label: 'ความเหมาะสมด้านบุคลิกภาพในตำแหน่งงาน' },
@@ -103,7 +101,7 @@ const SCORE_DEFS = [
   { n: 1, label: 'น้อยมาก', desc: 'ขาดความรู้/ทักษะ · ตอบสนองพื้นฐานไม่ได้' }
 ];
 
-// Step 8 — probation evaluation criteria
+// Step 6 — probation evaluation criteria
 const PROB_CRITERIA = [
   { section: '1. เรื่องเวลาการเข้างาน (Time & Attendance)', items: [
     { key: 't1', label: 'ตรงต่อเวลาในการมาทำงาน · ไม่มาสาย' },
@@ -162,16 +160,16 @@ function deriveStatus(c) {
     if (dd <= 3) return { tone: 'yellow', label: `ใกล้ deadline (${dd} วัน)`,        icon: AlertTriangle };
   }
 
-  // Step 6: offer approval state
-  if (c.current_step === 6) {
-    const wf = c.approval_workflows?.['6'];
+  // Step 5: offer approval state
+  if (c.current_step === 5) {
+    const wf = c.approval_workflows?.['5'];
     if (wf?.status === 'in_progress') {
       const done = (wf.approvers || []).filter((a) => a.status === 'approved').length;
       return { tone: 'blue', label: `รออนุมัติ Offer (${done}/${(wf.approvers || []).length})`, icon: Clock };
     }
   }
 
-  // Step 8: probation
+  // Step 6: probation
   if (c.current_step === TOTAL_STEPS) {
     const ps = c.probation?.startDate ?? c.process_start_date;
     const dp = daysBetween(ps, today());
@@ -191,8 +189,8 @@ function progressPercent(c) {
 
 function bucketOf(c) {
   if (c.status === 'passed') return 'probation';
-  if (c.current_step <= 5)   return 'open';
-  if (c.current_step <= 7)   return 'onboarding';
+  if (c.current_step <= 4)   return 'open';
+  if (c.current_step <= 5)   return 'onboarding';
   return 'probation';
 }
 
@@ -298,16 +296,13 @@ export default function App() {
       alert(`ต้องบันทึก "อนุมัติครบ" ของ Step ${c.current_step} ก่อนถึงจะไปต่อได้`);
       return;
     }
-    if (c.current_step === 5 && !c.name?.trim()) {
-      alert('ใส่ชื่อผู้สมัครที่ผ่านสัมภาษณ์ก่อนไป Step 6 (Offer Approval)');
+    if (c.current_step === 4 && !c.name?.trim()) {
+      alert('ใส่ชื่อผู้สมัครที่ผ่านสัมภาษณ์ก่อนไป Step 5 (Offer Approval)');
       return;
     }
     const next = c.current_step + 1;
     const steps = [...(c.steps ?? []), { step: c.current_step, completedDate: todayISO(), completedBy: actor }];
     const patch = { current_step: next, steps };
-    if (next === 7 && (!c.documents || c.documents.length === 0)) {
-      patch.documents = DOCUMENT_TEMPLATE.map((d) => ({ ...d, received: false, receivedDate: null }));
-    }
     if (next === TOTAL_STEPS) {
       const start = todayISO();
       patch.probation = {
@@ -319,7 +314,7 @@ export default function App() {
   }
 
   // Interim bridge until the full e-signature portal is built (Phase 2):
-  // record the approval workflow for Step 1/6 as completed.
+  // record the approval workflow for Step 1/5 as completed.
   async function markApprovalComplete(c, step) {
     const wf = {
       status: 'completed',
@@ -338,18 +333,18 @@ export default function App() {
 
   async function dropCandidate(c) {
     if (!c.name) return;
-    if (!confirm(`ลบ "${c.name}" ออกจากตำแหน่งนี้?\n\nระบบจะเก็บประวัติใน audit log แล้วย้อนกลับไป Step 5 หา candidate อื่น`)) return;
+    if (!confirm(`ลบ "${c.name}" ออกจากตำแหน่งนี้?\n\nระบบจะเก็บประวัติใน audit log แล้วย้อนกลับไป Step 4 หา candidate อื่น`)) return;
     const droppedName = c.name;
     const dateStr = todayISO();
-    const { ['6']: _drop, ...keepWf } = c.approval_workflows ?? {};
+    const { ['5']: _drop, ...keepWf } = c.approval_workflows ?? {};
     await updateCandidate(c.id, {
       name: null,
-      current_step: 5,
+      current_step: 4,
       steps: [...(c.steps ?? []), { step: c.current_step, completedDate: dateStr, completedBy: actor, note: `ผู้สมัคร "${droppedName}" ถอน` }],
       documents: [],
       approval_workflows: keepWf,
       probation: {},
-      notes: (c.notes ? c.notes + '\n' : '') + `📌 ${dateStr}: "${droppedName}" ถอน · กลับมาที่ Step 5`
+      notes: (c.notes ? c.notes + '\n' : '') + `📌 ${dateStr}: "${droppedName}" ถอน · กลับมาที่ Step 4`
     });
   }
 
@@ -412,9 +407,9 @@ export default function App() {
   }
 
   const sectionDefs = [
-    { key: 'open',       title: '🔍 Open Position',        sub: 'Sourcing · ยังไม่มีผู้สมัคร · Step 1–5' },
-    { key: 'onboarding', title: '✍️ Process รับเข้าทำงาน',  sub: 'ได้ผู้สมัครแล้ว · Step 6–7' },
-    { key: 'probation',  title: '🛡 Process Probation',     sub: 'ทดลองงาน 120 วัน · Step 8 + ผ่านโปร' }
+    { key: 'open',       title: '🔍 Open Position',        sub: 'Sourcing · ยังไม่มีผู้สมัคร · Step 1–4' },
+    { key: 'onboarding', title: '✍️ Process รับเข้าทำงาน',  sub: 'ได้ผู้สมัครแล้ว · Step 5' },
+    { key: 'probation',  title: '🛡 Process Probation',     sub: 'ทดลองงาน 120 วัน · Step 6 + ผ่านโปร' }
   ];
 
   async function signMyApproval(candidate, step, signatureData, myEmail) {
@@ -622,10 +617,10 @@ function MyWorkPortal({ candidates, email, actor, loading, onSignOut, onSign, on
   const signOther   = signTasks.filter((t) => t.mine.status !== 'pending');
 
   const evalTasks = myEmail ? (candidates || []).flatMap((c) =>
-    ['5', '8'].flatMap((step) => (distHasMe(c, step, myEmail) && !c.generated_docs?.[step]) ? [{ c, step }] : [])
+    ['4', '6'].flatMap((step) => (distHasMe(c, step, myEmail) && !c.generated_docs?.[step]) ? [{ c, step }] : [])
   ) : [];
   const evalDone = myEmail ? (candidates || []).flatMap((c) =>
-    ['5', '8'].flatMap((step) => (distHasMe(c, step, myEmail) && c.generated_docs?.[step]) ? [{ c, step }] : [])
+    ['4', '6'].flatMap((step) => (distHasMe(c, step, myEmail) && c.generated_docs?.[step]) ? [{ c, step }] : [])
   ) : [];
 
   const reviewTasks = myEmail ? (candidates || []).flatMap((c) => {
@@ -648,14 +643,14 @@ function MyWorkPortal({ candidates, email, actor, loading, onSignOut, onSign, on
     catch (e) { alert('บันทึกผลไม่สำเร็จ: ' + (e?.message || e)); }
   }
 
-  const FormComp = evalForm ? (evalForm.step === '5' ? ScorecardForm : ProbationEvalForm) : null;
+  const FormComp = evalForm ? (evalForm.step === '4' ? ScorecardForm : ProbationEvalForm) : null;
 
   function renderDoc(vd) {
     const c = vd.c, step = vd.step, data = c.generated_docs?.[step]?.data;
     if (step === '1') return <ManpowerRequestDoc data={data} candidate={c} workflow={c.approval_workflows?.['1']} />;
-    if (step === '6') return <ApprovalDoc data={data} candidate={c} workflow={c.approval_workflows?.['6']} />;
-    if (step === '5') return <ScorecardDoc data={data} candidate={c} />;
-    if (step === '8') return <ProbationEvalDoc data={data} candidate={c} />;
+    if (step === '5') return <ApprovalDoc data={data} candidate={c} workflow={c.approval_workflows?.['5']} />;
+    if (step === '4') return <ScorecardDoc data={data} candidate={c} />;
+    if (step === '6') return <ProbationEvalDoc data={data} candidate={c} />;
     return <div className="text-sm text-slate-500">ไม่มีเอกสาร</div>;
   }
 
@@ -695,7 +690,7 @@ function MyWorkPortal({ candidates, email, actor, loading, onSignOut, onSign, on
               <section>
                 <h2 className="text-sm font-semibold text-slate-800 mb-2">📝 รอประเมิน ({evalTasks.length})</h2>
                 <div className="space-y-2">{evalTasks.map((t, i) => (
-                  <PortalRow key={'e' + i} c={t.c} step={t.step} role={t.step === '5' ? 'ประเมินสัมภาษณ์' : 'ประเมินทดลองงาน'} highlight actionLabel="เปิดฟอร์มประเมิน" onAction={() => setEvalForm(t)} />
+                  <PortalRow key={'e' + i} c={t.c} step={t.step} role={t.step === '4' ? 'ประเมินสัมภาษณ์' : 'ประเมินทดลองงาน'} highlight actionLabel="เปิดฟอร์มประเมิน" onAction={() => setEvalForm(t)} />
                 ))}</div>
               </section>
             )}
@@ -728,7 +723,7 @@ function MyWorkPortal({ candidates, email, actor, loading, onSignOut, onSign, on
                     <PortalRow key={'o' + i} c={t.c} step={t.step} role={t.mine.role} status={t.mine.status} onView={() => setViewDoc({ c: t.c, step: t.step })} />
                   ))}
                   {evalDone.map((t, i) => (
-                    <PortalRow key={'d' + i} c={t.c} step={t.step} role={t.step === '5' ? 'ประเมินสัมภาษณ์' : 'ประเมินทดลองงาน'} status="done" onView={() => setViewDoc({ c: t.c, step: t.step })} />
+                    <PortalRow key={'d' + i} c={t.c} step={t.step} role={t.step === '4' ? 'ประเมินสัมภาษณ์' : 'ประเมินทดลองงาน'} status="done" onView={() => setViewDoc({ c: t.c, step: t.step })} />
                   ))}
                 </div>
               </section>
@@ -1009,7 +1004,7 @@ function ReportsView({ candidates }) {
     const inThisMonth = (iso) => { if (!iso) return false; const d = new Date(iso); return d.getFullYear() === yr && d.getMonth() === mo; };
     const monthLabel = now.toLocaleDateString('th-TH', { month: 'long', year: 'numeric' });
     const stepDate = (c, step) => c.steps?.find((s) => s.step === step)?.completedDate ?? null;
-    const offerDate = (c) => c.approval_workflows?.['6']?.completedAt ?? stepDate(c, 6);
+    const offerDate = (c) => c.approval_workflows?.['5']?.completedAt ?? stepDate(c, 5);
 
     const openedThisMonth = candidates.filter((c) => inThisMonth(c.process_start_date));
     const filledThisMonth = candidates.filter((c) => { const d = offerDate(c); return d && inThisMonth(d); });
@@ -1029,7 +1024,7 @@ function ReportsView({ candidates }) {
     const overdue = active.filter((c) => deriveStatus(c).tone === 'red');
 
     const appr = [];
-    candidates.forEach((c) => [1, 6].forEach((st) => { const wf = c.approval_workflows?.[String(st)]; if (wf?.status === 'completed' && wf.createdAt && wf.completedAt) appr.push(daysBetween(wf.createdAt, wf.completedAt)); }));
+    candidates.forEach((c) => [1, 5].forEach((st) => { const wf = c.approval_workflows?.[String(st)]; if (wf?.status === 'completed' && wf.createdAt && wf.completedAt) appr.push(daysBetween(wf.createdAt, wf.completedAt)); }));
     const avgAppr = appr.length ? (appr.reduce((a, b) => a + b, 0) / appr.length).toFixed(1) : null;
 
     const depts = Array.from(new Set(candidates.map((c) => c.department)));
@@ -1044,7 +1039,7 @@ function ReportsView({ candidates }) {
     candidates.forEach((c) => { const ms = c.probation?.milestones; if (ms) ['day30', 'day60', 'day90', 'day120'].forEach((k) => { if (ms[k]?.score != null) probScores.push(ms[k].score); }); });
     const avgProb = probScores.length ? (probScores.reduce((a, b) => a + b, 0) / probScores.length).toFixed(1) : null;
 
-    const offers = candidates.map((c) => c.generated_docs?.['6']).filter(Boolean);
+    const offers = candidates.map((c) => c.generated_docs?.['5']).filter(Boolean);
     const sal = offers.map((o) => parseMoney(o.salary_new)).filter((x) => x > 0);
     const inc = offers.map((o) => o.total_income != null ? o.total_income : parseMoney(o.salary_new)).filter((x) => x > 0);
     const avgSal = sal.length ? Math.round(sal.reduce((a, b) => a + b, 0) / sal.length) : null;
@@ -1188,7 +1183,7 @@ function CandidateForm({ initial, departments, onClose, onSave }) {
         </Field>
         {initial && (
           <Field label="ชื่อผู้สมัคร (หลังผ่านสัมภาษณ์)">
-            <input className="input" value={form.name} onChange={(e) => set('name', e.target.value)} placeholder="ใส่หลังผ่าน Step 5" />
+            <input className="input" value={form.name} onChange={(e) => set('name', e.target.value)} placeholder="ใส่หลังผ่าน Step 4" />
           </Field>
         )}
         <Field label="แผนก" required>
@@ -1297,7 +1292,7 @@ function CandidateDetail({ c, onClose, onEdit, onDelete, onAdvance, onApprove, o
         </div>
       </div>
 
-      {!hasName && c.current_step >= 6 && c.status === 'active' && (
+      {!hasName && c.current_step >= 5 && c.status === 'active' && (
         <div className="mb-4 bg-amber-50 border border-amber-200 rounded-xl p-3 text-sm text-amber-900 flex items-center gap-2">
           <AlertTriangle className="w-4 h-4 shrink-0" />
           <div className="flex-1"><b>ต้องใส่ชื่อผู้สมัครก่อน</b> · ผ่านสัมภาษณ์แล้วใส่ชื่อก่อนถึงจะไป Step ถัดไปได้</div>
@@ -1357,7 +1352,7 @@ function CandidateDetail({ c, onClose, onEdit, onDelete, onAdvance, onApprove, o
           {Object.keys(DOC_LABELS).map((k) => {
             const step = Number(k);
             const info = DOC_LABELS[step];
-            const ported = [1, 5, 6, 8].includes(step); // เอกสารที่พอร์ตเข้าระบบจริงแล้วครบ
+            const ported = [1, 4, 5, 6].includes(step); // เอกสารที่พอร์ตเข้าระบบจริงแล้วครบ
             const made = !!c.generated_docs?.[step];
             return (
               <div key={step} className={`p-3 rounded-lg border ${made ? 'bg-emerald-50 border-emerald-200' : 'bg-white border-slate-200'}`}>
@@ -1450,60 +1445,42 @@ function CandidateDetail({ c, onClose, onEdit, onDelete, onAdvance, onApprove, o
           <ManpowerRequestDoc data={c.generated_docs[1].data} candidate={c} workflow={c.approval_workflows?.[1]} />
         </DocViewer>
       )}
-      {docForm === 6 && (
+      {docForm === 5 && (
         <ApprovalForm
-          initial={c.generated_docs?.[6]?.data ?? null}
+          initial={c.generated_docs?.[5]?.data ?? null}
           candidate={c}
           user={{ name: actor }}
           onClose={() => setDocForm(null)}
-          onSave={(data, approvers) => { onSaveDoc(6, data, approvers); setDocForm(null); }}
+          onSave={(data, approvers) => { onSaveDoc(5, data, approvers); setDocForm(null); }}
         />
-      )}
-      {docView === 6 && c.generated_docs?.[6] && (
-        <DocViewer title={DOC_LABELS[6].thai} onClose={() => setDocView(null)}>
-          <ApprovalDoc data={c.generated_docs[6].data} candidate={c} workflow={c.approval_workflows?.[6]} />
-        </DocViewer>
-      )}
-      {docForm === 5 && (
-        <ScorecardForm initial={c.generated_docs?.[5]?.data ?? null} candidate={c} user={{ name: actor }}
-          onClose={() => setDocForm(null)} onSave={(data) => { onSaveDoc(5, data); setDocForm(null); }} />
       )}
       {docView === 5 && c.generated_docs?.[5] && (
         <DocViewer title={DOC_LABELS[5].thai} onClose={() => setDocView(null)}>
-          <ScorecardDoc data={c.generated_docs[5].data} candidate={c} />
+          <ApprovalDoc data={c.generated_docs[5].data} candidate={c} workflow={c.approval_workflows?.[5]} />
         </DocViewer>
       )}
-      {docForm === 8 && (
-        <ProbationEvalForm initial={c.generated_docs?.[8]?.data ?? null} candidate={c} user={{ name: actor }}
-          onClose={() => setDocForm(null)} onSave={(data) => { onSaveDoc(8, data); setDocForm(null); }} />
+      {docForm === 4 && (
+        <ScorecardForm initial={c.generated_docs?.[4]?.data ?? null} candidate={c} user={{ name: actor }}
+          onClose={() => setDocForm(null)} onSave={(data) => { onSaveDoc(4, data); setDocForm(null); }} />
       )}
-      {docView === 8 && c.generated_docs?.[8] && (
-        <DocViewer title={DOC_LABELS[8].thai} onClose={() => setDocView(null)}>
-          <ProbationEvalDoc data={c.generated_docs[8].data} candidate={c} />
+      {docView === 4 && c.generated_docs?.[4] && (
+        <DocViewer title={DOC_LABELS[4].thai} onClose={() => setDocView(null)}>
+          <ScorecardDoc data={c.generated_docs[4].data} candidate={c} />
+        </DocViewer>
+      )}
+      {docForm === 6 && (
+        <ProbationEvalForm initial={c.generated_docs?.[6]?.data ?? null} candidate={c} user={{ name: actor }}
+          onClose={() => setDocForm(null)} onSave={(data) => { onSaveDoc(6, data); setDocForm(null); }} />
+      )}
+      {docView === 6 && c.generated_docs?.[6] && (
+        <DocViewer title={DOC_LABELS[6].thai} onClose={() => setDocView(null)}>
+          <ProbationEvalDoc data={c.generated_docs[6].data} candidate={c} />
         </DocViewer>
       )}
 
-      {/* Pre-boarding documents (Step 7+) */}
-      {c.current_step >= 7 && (
-        <Section icon={FileText} title="เอกสารเริ่มงาน (Step 7)" subtitle={`รับแล้ว ${documents.filter((d) => d.received).length}/${documents.length}`}>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-            {documents.map((d) => (
-              <label key={d.key} className={`flex items-center gap-2 p-2.5 rounded-lg border text-sm cursor-pointer ${d.received ? 'bg-emerald-50 border-emerald-200' : 'bg-white border-slate-200 hover:border-slate-300'}`}>
-                <input type="checkbox" checked={d.received} onChange={() => onToggleDoc(d.key)} className="accent-emerald-600 w-4 h-4" />
-                <div className="flex-1">
-                  <div className={`${d.received ? 'text-emerald-800 font-medium' : 'text-slate-700'}`}>{d.label}</div>
-                  {d.received && d.receivedDate && <div className="text-[11px] text-emerald-700">รับวันที่ {fmtDate(d.receivedDate)}</div>}
-                </div>
-                {d.received && <FileCheck className="w-4 h-4 text-emerald-600" />}
-              </label>
-            ))}
-          </div>
-        </Section>
-      )}
-
-      {/* Probation tracker (Step 8 / passed) */}
+      {/* Probation tracker (Step 6 / passed) */}
       {(c.current_step === TOTAL_STEPS || c.status === 'passed') && (
-        <Section icon={ShieldCheck} title="ทดลองงาน 120 วัน (Step 8)" subtitle={c.status === 'passed' ? 'ผ่านโปรแล้ว' : `วันที่ ${Math.min(daysInProbation, PROBATION_DAYS)} / ${PROBATION_DAYS}`}>
+        <Section icon={ShieldCheck} title="ทดลองงาน 120 วัน (Step 6)" subtitle={c.status === 'passed' ? 'ผ่านโปรแล้ว' : `วันที่ ${Math.min(daysInProbation, PROBATION_DAYS)} / ${PROBATION_DAYS}`}>
           <div className="bg-white border border-slate-200 rounded-xl p-4">
             <div className="grid grid-cols-4 gap-2 mb-3 text-center text-[11px]">
               {[['day30', 30], ['day60', 60], ['day90', 90], ['day120', 119]].map(([key, day]) => {
@@ -1916,7 +1893,7 @@ function ManpowerRequestDoc({ data, candidate, workflow }) {
   );
 }
 
-// ===== Step 6: Recruitment Approval Form =====
+// ===== Step 5: Recruitment Approval Form =====
 function ApprovalForm({ initial, candidate, user, onClose, onSave }) {
   const [form, setForm] = useState(initial ?? {
     division: candidate.department,
@@ -1947,7 +1924,7 @@ function ApprovalForm({ initial, candidate, user, onClose, onSave }) {
     onSave({ ...form, total_income: totalIncome, _approvers: approvers }, approvers);
   };
   return (
-    <Modal title="สร้าง Recruitment Approval Form" subtitle={`Step 6 · ${candidate.name || candidate.position}`} onClose={onClose} wide>
+    <Modal title="สร้าง Recruitment Approval Form" subtitle={`Step 5 · ${candidate.name || candidate.position}`} onClose={onClose} wide>
       <form onSubmit={submit} className="space-y-3">
         <div className="grid grid-cols-2 gap-3">
           <Field label="ฝ่าย"><input className="input" value={form.division} onChange={(e) => set('division', e.target.value)} /></Field>
@@ -2091,7 +2068,7 @@ function ApprovalDoc({ data, candidate, workflow }) {
   );
 }
 
-// ===== Step 5: Interview Evaluation (Scorecard) =====
+// ===== Step 4: Interview Evaluation (Scorecard) =====
 function ScorecardForm({ initial, candidate, user, onClose, onSave }) {
   const allKeys = EVAL_CRITERIA.flatMap((c) => c.items.map((i) => i.key));
   const defaultScores = Object.fromEntries(allKeys.map((k) => [k, 3]));
@@ -2106,7 +2083,7 @@ function ScorecardForm({ initial, candidate, user, onClose, onSave }) {
   const setScore = (k, v) => setForm((f) => ({ ...f, scores: { ...f.scores, [k]: v } }));
   const submit = (e) => { e.preventDefault(); onSave(form); };
   return (
-    <Modal title="สร้าง Interview Evaluation Form" subtitle={`Step 5 · ${candidate.name || candidate.position}`} onClose={onClose} wide>
+    <Modal title="สร้าง Interview Evaluation Form" subtitle={`Step 4 · ${candidate.name || candidate.position}`} onClose={onClose} wide>
       <form onSubmit={submit} className="space-y-3">
         <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 space-y-2">
           <div className="text-xs font-semibold text-slate-700">ส่วนที่ 1: ข้อมูลผู้สมัคร</div>
@@ -2230,7 +2207,7 @@ function ScorecardDoc({ data, candidate }) {
   );
 }
 
-// ===== Step 8: Probation Evaluation =====
+// ===== Step 6: Probation Evaluation =====
 function ProbationEvalForm({ initial, candidate, user, onClose, onSave }) {
   const probStart = candidate.probation?.startDate ?? todayISO();
   const allKeys = PROB_CRITERIA.flatMap((s) => s.items.map((i) => i.key));
@@ -2277,7 +2254,7 @@ function ProbationEvalForm({ initial, candidate, user, onClose, onSave }) {
     </div>
   );
   return (
-    <Modal title="Probation Evaluation Form" subtitle={`Step 8 · ${candidate.name || candidate.position}`} onClose={onClose} wide>
+    <Modal title="Probation Evaluation Form" subtitle={`Step 6 · ${candidate.name || candidate.position}`} onClose={onClose} wide>
       <form onSubmit={submit} className="space-y-3">
         <div className="grid grid-cols-2 gap-3">
           <Field label="วันเริ่มทดลองงาน"><input type="date" className="input" value={form.probation_start} onChange={(e) => setBasic('probation_start', e.target.value)} /></Field>
@@ -2382,11 +2359,9 @@ function emailTemplate(step, c) {
   const T = {
     1: { to: apprEmails, subject: `Approval Required: Open Position - ${pos} (${c.department})`, body: `Dear Approver,\n\nPlease review and approve the Manpower Requisition for the position "${pos}" (${c.department}).${sign}` },
     3: { to: '', subject: `Candidate Profile for review: ${pos}`, body: `Dear Hiring Manager,\n\nPlease find the shortlisted candidate(s) for ${pos} (${c.department}) for your review.${sign}` },
-    4: { to: '', subject: `Interview Invitation: ${pos} - JIAN CHA Co., Ltd.`, body: `Dear Khun ${name},\n\nWe are pleased to invite you to an interview for the position of ${pos}.\n\nDate & Time: ____________\nFormat: ____________\nVenue: ____________\n\nKindly confirm your attendance by replying to this email.${sign}` },
-    5: { to: '', subject: `Interview Scorecard: ${name} · ${pos}`, body: `Dear Evaluator,\n\nPlease complete the interview evaluation (scorecard) for ${name} — ${pos} (${c.department}).${sign}` },
-    6: { to: apprEmails, subject: `Approval Required: Hire ${name} - ${pos}`, body: `Dear Approver,\n\nPlease review and approve the Recruitment Approval for ${name} — ${pos} (${c.department}).${sign}` },
-    7: { to: '', subject: `Pre-Boarding Documents: ${pos} (JIAN CHA)`, body: `Dear Khun ${name},\n\nCongratulations on joining JIAN CHA Co., Ltd. Please prepare and submit your pre-boarding documents.${sign}` },
-    8: { to: '', subject: `Probation Evaluation: ${name} (Day 30/60/90)`, body: `Dear Evaluator,\n\nPlease complete the probation evaluation for ${name} — ${pos} (${c.department}).${sign}` }
+    4: { to: '', subject: `Interview Scorecard: ${name} · ${pos}`, body: `Dear Evaluator,\n\nPlease complete the interview evaluation (scorecard) for ${name} — ${pos} (${c.department}).${sign}` },
+    5: { to: apprEmails, subject: `Approval Required: Hire ${name} - ${pos}`, body: `Dear Approver,\n\nPlease review and approve the Recruitment Approval for ${name} — ${pos} (${c.department}).${sign}` },
+    6: { to: '', subject: `Probation Evaluation: ${name} (Day 30/60/90)`, body: `Dear Evaluator,\n\nPlease complete the probation evaluation for ${name} — ${pos} (${c.department}).${sign}` }
   };
   return T[step] || { to: '', subject: `${pos} - JIAN CHA HR`, body: `Dear Sir/Madam,${sign}` };
 }
