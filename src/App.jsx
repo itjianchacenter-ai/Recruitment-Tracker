@@ -3,7 +3,8 @@
 import {
   listCandidates, createCandidate, updateCandidate, deleteCandidate,
   subscribeCandidates, signIn, signOut, getSession, onAuthChange,
-  actorFromSession, roleFromSession
+  actorFromSession, roleFromSession,
+  adminListUsers, adminCreateUser, adminResetPassword, adminDeleteUser
 } from './lib/supabase.js';
 
 // ---------------------------------------------------------------------------
@@ -3589,59 +3590,83 @@ ${HR_EMAIL}`;
       );
     }
 
-    // ===== User accounts (login + รหัสผ่าน 6 หลัก) · เก็บใน localStorage ใช้ฐานเดียวกับหน้า login (preview-roles.html) =====
+    // ===== User accounts — REAL Supabase Auth users via 'admin-users' Edge Function =====
+    // admin สร้าง/รีเซ็ต/ลบ user จริงใน Supabase Auth → login ได้จริง
+    // (service_role อยู่ฝั่ง server เท่านั้น · ไม่เก็บรหัสไว้ใน localStorage อีกต่อไป)
+    // รหัส 6 หลักที่ generate จะถูกตั้งเป็น password ของ user แล้วโชว์ครั้งเดียวให้ admin จดไปแจ้ง
     const gen6 = () => String(Math.floor(100000 + Math.random() * 900000));
-    const ACCT_KEY = 'jc_recruitment_accounts_v1';
-    const SEED_ACCOUNTS = [
-      // ระบบจริง: เริ่มต้นด้วย admin กล่องกลางตัวเดียว · admin สร้าง/ออกรหัส user คนอื่นเองในระบบ
-      { email:'hr.Jc@jianchatea.com', name:'HR Recruitment (กล่องกลาง)', role:'admin', dept:'HR & People', password:'884201' }
-    ];
-    function loadAccounts(){ try{ const s=localStorage.getItem(ACCT_KEY); if(s){ const a=JSON.parse(s); if(Array.isArray(a)&&a.length) return a; } }catch(e){} try{ localStorage.setItem(ACCT_KEY, JSON.stringify(SEED_ACCOUNTS)); }catch(e){} return SEED_ACCOUNTS.map(a=>({...a})); }
-    function saveAccounts(list){ try{ localStorage.setItem(ACCT_KEY, JSON.stringify(list)); }catch(e){} }
 
-    function UserManager({ accounts, setAccounts, onClose }) {
+    function UserManager({ accounts, setAccounts, loading, error, onReload, onClose }) {
       const [q, setQ] = useState('');
       const [revealed, setRevealed] = useState({});
       const [creating, setCreating] = useState(false);
+      const [busy, setBusy] = useState(false);
       const [nf, setNf] = useState({ email:'', name:'', dept:'', role:'user' });
-      const withCode = accounts.filter(a => a.password).length;
+      const withCode = accounts.filter(a => a.hasPassword).length;
       const filtered = accounts.filter(a => (a.email + ' ' + a.name + ' ' + (a.dept||'')).toLowerCase().includes(q.trim().toLowerCase()));
-      const issue = (email) => {
+      const issue = async (email) => {
         const a = accounts.find(x => x.email === email);
-        if (a?.password && !confirm('รีเซ็ตรหัสใหม่ให้ ' + email + '? · รหัสเดิมจะใช้ไม่ได้ทันที')) return;
+        if (a?.hasPassword && !confirm('รีเซ็ตรหัสใหม่ให้ ' + email + '? · รหัสเดิมจะใช้ไม่ได้ทันที')) return;
         const code = gen6();
-        setAccounts(list => list.map(x => x.email === email ? { ...x, password: code } : x));
-        setRevealed(r => ({ ...r, [email]: code }));
+        setBusy(true);
+        try {
+          await adminResetPassword({ id: a?.id, email, password: code });
+          setAccounts(list => list.map(x => x.email === email ? { ...x, hasPassword: true } : x));
+          setRevealed(r => ({ ...r, [email]: code }));
+          showToast('✓ ออกรหัสใหม่ + อัปเดตใน Supabase แล้ว · login ได้ทันที', 'success');
+        } catch (e) {
+          showToast('รีเซ็ตรหัสไม่สำเร็จ: ' + (e?.message || e), 'warning');
+        } finally { setBusy(false); }
       };
-      const createUser = () => {
+      const createUser = async () => {
         const em = nf.email.trim();
         if (!em.toLowerCase().endsWith('@jianchatea.com')) { showToast('อีเมลต้องเป็น @jianchatea.com', 'warning'); return; }
         if (accounts.some(a => a.email.toLowerCase() === em.toLowerCase())) { showToast('มีอีเมลนี้ในระบบแล้ว', 'warning'); return; }
         if (!nf.name.trim()) { showToast('กรุณากรอกชื่อผู้ใช้', 'warning'); return; }
         const code = gen6();
-        setAccounts(list => [...list, { email: em, name: nf.name.trim(), role: nf.role, dept: nf.dept.trim(), password: code }]);
-        setRevealed(r => ({ ...r, [em]: code }));
-        setNf({ email:'', name:'', dept:'', role:'user' });
-        setCreating(false);
-        setQ(em);
+        setBusy(true);
+        try {
+          const res = await adminCreateUser({ email: em, password: code, name: nf.name.trim(), dept: nf.dept.trim(), role: nf.role });
+          setAccounts(list => [...list, { id: res?.id, email: em, name: nf.name.trim(), role: nf.role, dept: nf.dept.trim(), hasPassword: true }]);
+          setRevealed(r => ({ ...r, [em]: code }));
+          setNf({ email:'', name:'', dept:'', role:'user' });
+          setCreating(false);
+          setQ(em);
+          showToast('✓ สร้าง user ใน Supabase แล้ว · login ได้จริง', 'success');
+        } catch (e) {
+          showToast('สร้างไม่สำเร็จ: ' + (e?.message || e), 'warning');
+        } finally { setBusy(false); }
       };
-      const removeUser = (email) => {
+      const removeUser = async (email) => {
         const a = accounts.find(x => x.email === email);
         if (!a) return;
         if (a.role === 'admin' && accounts.filter(x => x.role === 'admin').length <= 1) {
           showToast('ลบไม่ได้ · ต้องมี admin อย่างน้อย 1 คนในระบบ', 'warning'); return;
         }
-        if (!confirm(`ลบผู้ใช้ "${a.name || email}"\n${email}\n\nรหัสผ่านจะถูกยกเลิก เข้าระบบไม่ได้อีก · ยืนยันการลบ?`)) return;
-        setAccounts(list => list.filter(x => x.email !== email));
-        setRevealed(r => { const n = { ...r }; delete n[email]; return n; });
-        showToast(`🗑️ ลบผู้ใช้ ${a.name || email} แล้ว`, 'success');
+        if (!confirm(`ลบผู้ใช้ "${a.name || email}"\n${email}\n\nผู้ใช้จะถูกลบออกจาก Supabase Auth · เข้าระบบไม่ได้อีก · ยืนยันการลบ?`)) return;
+        setBusy(true);
+        try {
+          await adminDeleteUser({ id: a.id, email });
+          setAccounts(list => list.filter(x => x.email !== email));
+          setRevealed(r => { const n = { ...r }; delete n[email]; return n; });
+          showToast(`🗑️ ลบผู้ใช้ ${a.name || email} แล้ว`, 'success');
+        } catch (e) {
+          showToast('ลบไม่สำเร็จ: ' + (e?.message || e), 'warning');
+        } finally { setBusy(false); }
       };
       return (
-        <Modal title="👥 ผู้ใช้ & รหัสผ่าน" subtitle={`มีรหัสแล้ว ${withCode}/${accounts.length} คน · admin ออก/รีเซ็ตรหัส 6 หลักให้`} onClose={onClose} wide>
+        <Modal title="👥 ผู้ใช้ & รหัสผ่าน" subtitle={`${loading ? 'กำลังโหลด…' : `มีรหัสแล้ว ${withCode}/${accounts.length} คน`} · admin สร้าง/ออก/รีเซ็ตรหัส 6 หลัก (Supabase Auth จริง)`} onClose={onClose} wide>
           <div className="flex items-center gap-2 mb-2">
             <input className="input flex-1" placeholder="🔍 ค้นหาชื่อ / อีเมล / แผนก" value={q} onChange={e => setQ(e.target.value)} />
-            <button onClick={() => setCreating(v => !v)} className="text-sm bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-2 rounded-lg ibtn whitespace-nowrap">+ สร้าง User</button>
+            <button onClick={() => setCreating(v => !v)} disabled={busy} className="text-sm bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white px-3 py-2 rounded-lg ibtn whitespace-nowrap">+ สร้าง User</button>
           </div>
+
+          {error && (
+            <div className="bg-rose-50 border border-rose-200 rounded-lg p-3 mb-2 text-xs text-rose-800 flex items-center justify-between gap-2">
+              <span className="min-w-0">⚠️ โหลด/เชื่อมต่อรายชื่อผู้ใช้ไม่ได้: {error} <span className="text-rose-500">· ตรวจว่า deploy edge function <b>admin-users</b> แล้ว และคุณเป็น admin</span></span>
+              {onReload && <button onClick={onReload} className="shrink-0 text-xs bg-white border border-rose-300 text-rose-700 hover:bg-rose-100 px-2.5 py-1 rounded-lg">↻ ลองใหม่</button>}
+            </div>
+          )}
 
           {creating && (
             <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3 mb-2 space-y-2">
@@ -3656,14 +3681,15 @@ ${HR_EMAIL}`;
                 </select>
               </div>
               <div className="flex justify-end gap-2">
-                <button onClick={() => { setCreating(false); setNf({ email:'', name:'', dept:'', role:'user' }); }} className="px-3 py-1.5 text-sm text-slate-600">ยกเลิก</button>
-                <button onClick={createUser} className="px-3 py-1.5 text-sm bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg">สร้าง + ออกรหัส</button>
+                <button onClick={() => { setCreating(false); setNf({ email:'', name:'', dept:'', role:'user' }); }} disabled={busy} className="px-3 py-1.5 text-sm text-slate-600 disabled:opacity-50">ยกเลิก</button>
+                <button onClick={createUser} disabled={busy} className="px-3 py-1.5 text-sm bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-lg">{busy ? 'กำลังสร้าง…' : 'สร้าง + ออกรหัส'}</button>
               </div>
             </div>
           )}
 
           <div className="border border-slate-200 rounded-lg divide-y divide-slate-100 overflow-y-auto" style={{ maxHeight:'48vh' }}>
-            {filtered.length === 0 && <div className="text-center text-slate-400 text-xs py-6">ไม่พบผู้ใช้ตามที่ค้นหา</div>}
+            {loading && <div className="text-center text-slate-400 text-xs py-6">กำลังโหลดรายชื่อผู้ใช้จาก Supabase…</div>}
+            {!loading && filtered.length === 0 && <div className="text-center text-slate-400 text-xs py-6">{accounts.length === 0 ? 'ยังไม่มีผู้ใช้ · กด “+ สร้าง User”' : 'ไม่พบผู้ใช้ตามที่ค้นหา'}</div>}
             {filtered.map(a => (
               <div key={a.email} className="flex items-center gap-2 px-2.5 py-2">
                 <div className="flex-1 min-w-0">
@@ -3671,18 +3697,18 @@ ${HR_EMAIL}`;
                   <div className="text-[10px] text-slate-500 truncate">{a.email}</div>
                   <div className="text-[10px]">
                     {revealed[a.email]
-                      ? <span className="text-emerald-700 font-bold tracking-widest">รหัสใหม่ {revealed[a.email]} — แจ้ง user + จดเก็บ</span>
-                      : a.password
-                        ? <span className="text-slate-400">✓ มีรหัสแล้ว (ซ่อนไว้)</span>
+                      ? <span className="text-emerald-700 font-bold tracking-widest">รหัสใหม่ {revealed[a.email]} — แจ้ง user + จดเก็บ (โชว์ครั้งเดียว)</span>
+                      : a.hasPassword
+                        ? <span className="text-slate-400">✓ มีรหัสแล้ว (เก็บใน Supabase · ดูย้อนหลังไม่ได้)</span>
                         : <span className="text-amber-600">ยังไม่มีรหัส</span>}
                   </div>
                 </div>
-                <button onClick={() => issue(a.email)} className={`text-xs px-2.5 py-1 rounded whitespace-nowrap shrink-0 ${a.password ? 'bg-white border border-slate-300 text-slate-700 hover:bg-slate-50' : 'bg-slate-900 hover:bg-slate-800 text-white'}`}>{a.password ? 'รีเซ็ต' : 'สร้างรหัส'}</button>
-                <button onClick={() => removeUser(a.email)} title="ลบผู้ใช้ออกจากระบบ" className="text-xs px-2.5 py-1 rounded whitespace-nowrap shrink-0 bg-white border border-rose-200 text-rose-600 hover:bg-rose-50">🗑️ ลบ</button>
+                <button onClick={() => issue(a.email)} disabled={busy} className={`text-xs px-2.5 py-1 rounded whitespace-nowrap shrink-0 disabled:opacity-50 ${a.hasPassword ? 'bg-white border border-slate-300 text-slate-700 hover:bg-slate-50' : 'bg-slate-900 hover:bg-slate-800 text-white'}`}>{a.hasPassword ? 'รีเซ็ต' : 'สร้างรหัส'}</button>
+                <button onClick={() => removeUser(a.email)} disabled={busy} title="ลบผู้ใช้ออกจากระบบ" className="text-xs px-2.5 py-1 rounded whitespace-nowrap shrink-0 bg-white border border-rose-200 text-rose-600 hover:bg-rose-50 disabled:opacity-50">🗑️ ลบ</button>
               </div>
             ))}
           </div>
-          <div className="text-[10px] text-slate-400 mt-2">เดโม: โชว์รหัสบนจอเพื่อให้ลองเล่น · ระบบจริง hash เก็บ + โชว์ครั้งเดียว + จำกัดการลองผิด · รองรับ ~100 คน (ค้นหา/เลื่อนดู)</div>
+          <div className="text-[10px] text-slate-400 mt-2">รหัสถูกตั้งเป็น password ใน Supabase Auth จริง (hash เก็บฝั่ง server) · โชว์บนจอครั้งเดียวตอนออกรหัส · login ได้ทันทีด้วยอีเมล + รหัส 6 หลัก</div>
         </Modal>
       );
     }
@@ -3693,8 +3719,18 @@ ${HR_EMAIL}`;
       const [filter, setFilter] = useState({ dept:'', step:'', type:'', q:'' });
       const [tab, setTab] = useState('pipeline');
       const [showUsers, setShowUsers] = useState(false);
-      const [accounts, setAccounts] = useState(loadAccounts);
-      useEffect(() => { saveAccounts(accounts); }, [accounts]);
+      const [accounts, setAccounts] = useState([]);
+      const [accountsLoading, setAccountsLoading] = useState(false);
+      const [accountsError, setAccountsError] = useState(null);
+      const loadAccountsFromServer = useCallback(() => {
+        setAccountsLoading(true); setAccountsError(null);
+        adminListUsers()
+          .then(list => setAccounts(list))
+          .catch(e => setAccountsError(e?.message || String(e)))
+          .finally(() => setAccountsLoading(false));
+      }, []);
+      // โหลดรายชื่อผู้ใช้จาก Supabase เมื่อเปิดหน้าจัดการผู้ใช้ครั้งแรก
+      useEffect(() => { if (showUsers && accounts.length === 0 && !accountsError) loadAccountsFromServer(); }, [showUsers, accounts.length, accountsError, loadAccountsFromServer]);
 
       const departments = useMemo(() => Array.from(new Set(candidates.map(c => c.department))).sort(), [candidates]);
 
@@ -4019,20 +4055,6 @@ ${HR_EMAIL}`;
                 />
               </div>
             )}
-
-            <div className="bg-white rounded-2xl border border-slate-200 p-4 text-xs text-slate-600">
-              <div className="font-semibold text-slate-800 mb-2">💡 ลองคลิกการ์ดเพื่อเริ่ม flow (6-step process):</div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                <div>• <b>"Cashier"</b> (Step 1 รออนุมัติ 1/3) — Requisition Approval in progress</div>
-                <div>• <b>"QC Officer"</b> (Step 1 อนุมัติครบ) — พร้อมเริ่ม Sourcing</div>
-                <div>• <b>"Store Manager"</b> (Step 2) — เกิน 30-day deadline สีแดง</div>
-                <div>• <b>"Marketing Executive"</b> (Step 3) — ดู Upload + แจ้ง shortlist + timeline</div>
-                <div>• <b>"อรอนงค์ พงศ์ใหม่"</b> (Step 5 Offer Approval อนุมัติครบ) — กด "ส่ง Offer & ต่อ" เข้าทดลองงาน</div>
-                <div>• <b>"ธนวัฒน์ เจริญผล"</b> (Step 6 Day 60) — คลิก Day 90 บันทึก + สร้าง Probation Eval</div>
-                <div>• <b>"พิมพ์ใจ วงศ์งาม"</b> (Step 6 Day 119+) — กดผ่านโปร</div>
-                <div>• <b>"+ New Requisition"</b> มุมขวาบน — เปิดอัตราใหม่</div>
-              </div>
-            </div>
             </>)}
           </main>
 
@@ -4069,7 +4091,9 @@ ${HR_EMAIL}`;
           )}
 
           {showUsers && (
-            <UserManager accounts={accounts} setAccounts={setAccounts} onClose={() => setShowUsers(false)} />
+            <UserManager accounts={accounts} setAccounts={setAccounts}
+              loading={accountsLoading} error={accountsError} onReload={loadAccountsFromServer}
+              onClose={() => setShowUsers(false)} />
           )}
         </div>
       );

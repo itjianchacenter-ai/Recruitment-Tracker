@@ -31,12 +31,12 @@ body {
 .print-document .form-table td.lbl { background: #f1f5f9; color: #334155; font-weight: 500; white-space: nowrap; }
 .print-document .form-table td.val { color: #0f172a; }
 .print-document .check-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 16px; padding: 8px 10px; border: 1px solid #94a3b8; border-top: none; }
-.print-document .check-item { font-size: 11px; display: inline-flex; align-items: center; gap: 4px; }
-.print-document .checkbox { display: inline-block; width: 11px; height: 11px; border: 1px solid #475569; vertical-align: middle; margin-right: 4px; position: relative; }
-.print-document .checkbox.checked { background: #3D4F2D; }
+.print-document .check-item { font-size: 11px; display: flex; align-items: center; gap: 4px; }
+.print-document .checkbox { display: inline-block; width: 11px; height: 11px; border: 1px solid #475569; vertical-align: middle; margin-right: 4px; }
+.print-document .checkbox.checked { background: #3D4F2D; position: relative; }
 .print-document .checkbox.checked::after { content: '✓'; color: #fff; font-size: 9px; position: absolute; top: -3px; left: 1px; }
-.print-document .sig-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0; margin-top: 10px; border: 1px solid #94a3b8; }
-.print-document .sig-box { padding: 10px; border-right: 1px solid #94a3b8; min-height: 110px; display: flex; flex-direction: column; }
+.print-document .sig-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0; margin-top: 10px; border-top: 1px solid #94a3b8; border-left: 1px solid #94a3b8; }
+.print-document .sig-box { padding: 10px; border-right: 1px solid #94a3b8; border-bottom: 1px solid #94a3b8; min-height: 110px; display: flex; flex-direction: column; }
 .print-document .sig-box:last-child { border-right: none; }
 .print-document .sig-label { font-size: 11px; font-weight: 600; text-align: center; margin-bottom: 4px; }
 .print-document .sig-label-en { font-size: 9px; color: #64748b; text-align: center; margin-bottom: 24px; }
@@ -47,8 +47,9 @@ body {
   body { background: #fff; }
   body * { visibility: hidden; }
   .print-document, .print-document * { visibility: visible; }
-  .print-document { position: absolute; left: 0; top: 0; width: 100%; padding: 0 !important; box-shadow: none !important; border: none !important; }
+  .print-document { position: absolute; left: 0; top: 0; width: 100%; padding: 0 !important; margin: 0 !important; box-shadow: none !important; border: none !important; }
   .no-print { display: none !important; }
+  .print-document, .print-document * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
 
   /* compress to fit a single A4 page */
   .print-document { font-size: 10px; line-height: 1.3; }

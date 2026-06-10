@@ -132,6 +132,42 @@ export async function sendEmail(payload) {
   return data;
 }
 
+// ---------- Admin: user accounts (Edge Function 'admin-users') -------------
+// Creates/updates REAL Supabase Auth users so accounts made in the app can
+// log in. service_role lives only inside the Edge Function — never here.
+// Caller's JWT is sent automatically by functions.invoke; the function rejects
+// non-admins.
+async function invokeAdminUsers(action, payload = {}) {
+  const { data, error } = await supabase.functions.invoke('admin-users', {
+    body: { action, ...payload },
+  });
+  if (error) {
+    // surface the function's JSON { error } message when present
+    let msg = error.message || 'admin-users error';
+    try {
+      const ctx = await error.context?.json?.();
+      if (ctx?.error) msg = ctx.error;
+    } catch (_) { /* ignore */ }
+    throw new Error(msg);
+  }
+  if (data?.error) throw new Error(data.error);
+  return data;
+}
+
+export async function adminListUsers() {
+  const data = await invokeAdminUsers('list');
+  return data?.users ?? [];
+}
+export async function adminCreateUser({ email, password, name, dept, role }) {
+  return invokeAdminUsers('create', { email, password, name, dept, role });
+}
+export async function adminResetPassword({ id, email, password }) {
+  return invokeAdminUsers('reset-password', { id, email, password });
+}
+export async function adminDeleteUser({ id, email }) {
+  return invokeAdminUsers('delete', { id, email });
+}
+
 // ---------- Realtime -------------------------------------------------------
 
 export function subscribeCandidates(onChange) {
