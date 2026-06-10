@@ -168,6 +168,37 @@ export async function adminDeleteUser({ id, email }) {
   return invokeAdminUsers('delete', { id, email });
 }
 
+// Return the subset of `emails` that do NOT yet have a real Auth account.
+// Used to BLOCK assignment to people who were never created as users.
+// Comparison is normalized via usernameToEmail (so "hr01" === "hr01@domain")
+// and case-insensitive. Throws if the user list can't be fetched (caller
+// should treat that as "cannot verify -> block").
+export async function findUnregisteredEmails(emails) {
+  const wanted = [...new Set(
+    (emails || [])
+      .map((e) => usernameToEmail(e).toLowerCase())
+      .filter(Boolean)
+  )];
+  if (!wanted.length) return [];
+  const users = await adminListUsers();
+  const registered = new Set(users.map((u) => (u.email || '').toLowerCase()));
+  return wanted.filter((e) => !registered.has(e));
+}
+
+// ---------- Client IP (for e-signature audit trail) ------------------------
+// Bounces through the 'client-ip' Edge Function to get the caller's real
+// public IP. Returns '-' if the function isn't deployed / unreachable, so
+// signing never blocks on it.
+export async function getClientIp() {
+  try {
+    const { data, error } = await supabase.functions.invoke('client-ip', { body: {} });
+    if (error) return '-';
+    return data?.ip || '-';
+  } catch (_) {
+    return '-';
+  }
+}
+
 // ---------- Realtime -------------------------------------------------------
 
 export function subscribeCandidates(onChange) {

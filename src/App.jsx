@@ -3,9 +3,32 @@
 import {
   listCandidates, createCandidate, updateCandidate, deleteCandidate,
   subscribeCandidates, signIn, signOut, getSession, onAuthChange,
-  actorFromSession, roleFromSession,
-  adminListUsers, adminCreateUser, adminResetPassword, adminDeleteUser
+  actorFromSession, roleFromSession, usernameToEmail,
+  adminListUsers, adminCreateUser, adminResetPassword, adminDeleteUser,
+  findUnregisteredEmails, getClientIp
 } from './lib/supabase.js';
+
+// ---------------------------------------------------------------------------
+// Assignment guard — block assigning work to an email (username) that has no
+// real Auth account yet. Policy: HR must create the user BEFORE assigning, so
+// the work can actually land in that user's "งานของฉัน" and they can log in.
+// Returns true if OK to proceed; shows a toast + returns false if blocked.
+async function ensureAssigneesRegistered(emails, showToast) {
+  try {
+    const missing = await findUnregisteredEmails(emails);
+    if (missing.length) {
+      showToast(
+        `⚠️ ยังไม่มีผู้ใช้: ${missing.join(', ')} · กรุณาสร้างผู้ใช้ก่อนมอบหมาย (เมนู "ผู้ใช้ & รหัสผ่าน")`,
+        'warning'
+      );
+      return false;
+    }
+    return true;
+  } catch (e) {
+    showToast('ตรวจสอบผู้ใช้ไม่สำเร็จ: ' + (e?.message || '') + ' · ลองใหม่อีกครั้ง', 'warning');
+    return false;
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Row <-> model mapping (DB uses snake_case; cowork components use camelCase
@@ -1369,12 +1392,19 @@ ${HR_EMAIL}`;
         violet: { bg:'bg-violet-50/50', border:'border-violet-300', text:'text-violet-900', btn:'bg-violet-600 hover:bg-violet-700' }
       };
       const a = accentClasses[accent] ?? accentClasses.violet;
-      const assign = () => {
+      const [assigning, setAssigning] = useState(false);
+      const assign = async () => {
         if (!draft.name?.trim() || !draft.email?.trim()) { showToast('กรุณากรอกชื่อ + อีเมล (username)', 'warning'); return; }
-        const entry = { id:'r'+Date.now(), ...draft, sentAt:new Date().toISOString() };
-        onUpdate([...log, entry]);
-        setDraft({ name:'', email:'', role:'' });
-        showToast(`👤 มอบหมายให้ ${entry.name} (${entry.email}) แล้ว · งานอยู่ใน "งานของฉัน" ของเขา`, 'email');
+        setAssigning(true);
+        try {
+          if (!(await ensureAssigneesRegistered([draft.email], showToast))) return;
+          const entry = { id:'r'+Date.now(), ...draft, sentAt:new Date().toISOString() };
+          onUpdate([...log, entry]);
+          setDraft({ name:'', email:'', role:'' });
+          showToast(`👤 มอบหมายให้ ${entry.name} (${entry.email}) แล้ว · งานอยู่ใน "งานของฉัน" ของเขา`, 'email');
+        } finally {
+          setAssigning(false);
+        }
       };
       const remove = (id) => { if (confirm('ยกเลิกการมอบหมายรายการนี้?')) onUpdate(log.filter(e => e.id !== id)); };
       return (
@@ -1384,7 +1414,7 @@ ${HR_EMAIL}`;
             <input className="input text-xs" placeholder="ชื่อ-นามสกุล" value={draft.name} onChange={e => set('name', e.target.value)} />
             <input className="input text-xs" placeholder="email = username" value={draft.email} onChange={e => set('email', e.target.value)} />
             <input className="input text-xs" placeholder="ตำแหน่ง (ไม่บังคับ)" value={draft.role} onChange={e => set('role', e.target.value)} />
-            <button onClick={assign} className={`text-xs ${a.btn} text-white px-2 rounded ibtn whitespace-nowrap`}>มอบหมาย →</button>
+            <button onClick={assign} disabled={assigning} className={`text-xs ${a.btn} text-white px-2 rounded ibtn whitespace-nowrap disabled:opacity-60`}>{assigning ? 'ตรวจสอบ…' : 'มอบหมาย →'}</button>
           </div>
           {log.length > 0 && (
             <div className="bg-white border border-slate-200 rounded p-2">
@@ -2405,14 +2435,21 @@ ${HR_EMAIL}`;
         [`eval_due_${round}`]: v,
         rounds: { ...f.rounds, [round]: { ...f.rounds[round], date: v } }
       }));
-      const submit = (e) => {
+      const [submitting, setSubmitting] = useState(false);
+      const submit = async (e) => {
         e.preventDefault();
         if (!form.evaluator_name?.trim() || !form.evaluator_email?.trim()) {
           showToast('กรุณากรอกชื่อ + อีเมลผู้ประเมิน', 'warning');
           return;
         }
-        onSave(form);
-        showToast(`👤 มอบหมายฟอร์มประเมินให้ ${form.evaluator_name} (${form.evaluator_email}) · งานอยู่ใน "งานของฉัน" ของเขา`, 'email');
+        setSubmitting(true);
+        try {
+          if (!(await ensureAssigneesRegistered([form.evaluator_email], showToast))) return;
+          onSave(form);
+          showToast(`👤 มอบหมายฟอร์มประเมินให้ ${form.evaluator_name} (${form.evaluator_email}) · งานอยู่ใน "งานของฉัน" ของเขา`, 'email');
+        } finally {
+          setSubmitting(false);
+        }
       };
       return (
         <Modal title="สร้างคำขอประเมินทดลองงาน" subtitle={`Step 6 · ${candidate.name || candidate.position} · HR สร้าง + มอบหมายผู้ประเมิน`} onClose={onClose}>
@@ -2469,7 +2506,7 @@ ${HR_EMAIL}`;
 
             <div className="flex justify-end gap-2 pt-2">
               <button type="button" onClick={onClose} className="px-3 py-2 text-sm text-slate-600 hover:text-slate-900">ยกเลิก</button>
-              <button type="submit" className="px-4 py-2 text-sm bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg">📨 บันทึก + ส่ง link ให้ผู้ประเมิน</button>
+              <button type="submit" disabled={submitting} className="px-4 py-2 text-sm bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white rounded-lg">{submitting ? 'ตรวจสอบผู้ใช้…' : '📨 บันทึก + มอบหมายผู้ประเมิน'}</button>
             </div>
           </form>
         </Modal>
@@ -3031,20 +3068,27 @@ ${HR_EMAIL}`;
       const updateApprover = (i, field, value) => setApprovers(a => a.map((x, idx) => idx === i ? { ...x, [field]:value } : x));
       const canStart = approvers.length > 0 && approvers.every(a => a.name && a.email && a.role);
 
-      const start = () => {
-        const wf = {
-          id:'wf_' + Date.now(),
-          status:'in_progress',
-          documentName: docName,
-          createdAt: new Date().toISOString(),
-          approvers: approvers.map((a, i) => ({
-            ...a, id:'a' + (i+1), sequence:i+1,
-            status: i === 0 ? 'pending' : 'waiting',
-            signedAt: null, ip:null
-          }))
-        };
-        onStart(wf, step);
-        showToast(`มอบหมายงานอนุมัติให้ ${approvers[0].name} (${approvers[0].email}) แล้ว · งานจะไปอยู่ใน "งานของฉัน" ของเขา`, 'email');
+      const [starting, setStarting] = useState(false);
+      const start = async () => {
+        setStarting(true);
+        try {
+          if (!(await ensureAssigneesRegistered(approvers.map(a => a.email), showToast))) return;
+          const wf = {
+            id:'wf_' + Date.now(),
+            status:'in_progress',
+            documentName: docName,
+            createdAt: new Date().toISOString(),
+            approvers: approvers.map((a, i) => ({
+              ...a, id:'a' + (i+1), sequence:i+1,
+              status: i === 0 ? 'pending' : 'waiting',
+              signedAt: null, ip:null
+            }))
+          };
+          onStart(wf, step);
+          showToast(`มอบหมายงานอนุมัติให้ ${approvers[0].name} (${approvers[0].email}) แล้ว · งานจะไปอยู่ใน "งานของฉัน" ของเขา`, 'email');
+        } finally {
+          setStarting(false);
+        }
       };
 
       return (
@@ -3084,9 +3128,9 @@ ${HR_EMAIL}`;
 
             <div className="flex justify-end gap-2 pt-2">
               <button onClick={onClose} className="px-3 py-2 text-sm text-slate-600 hover:text-slate-900">ยกเลิก</button>
-              <button onClick={start} disabled={!canStart}
-                className={`px-4 py-2 text-sm rounded-lg ${canStart ? 'bg-slate-900 hover:bg-slate-800 text-white' : 'bg-slate-200 text-slate-400 cursor-not-allowed'}`}>
-                มอบหมายคนที่ 1
+              <button onClick={start} disabled={!canStart || starting}
+                className={`px-4 py-2 text-sm rounded-lg ${canStart && !starting ? 'bg-slate-900 hover:bg-slate-800 text-white' : 'bg-slate-200 text-slate-400 cursor-not-allowed'}`}>
+                {starting ? 'ตรวจสอบผู้ใช้…' : 'มอบหมายคนที่ 1'}
               </button>
             </div>
           </div>
@@ -3713,7 +3757,7 @@ ${HR_EMAIL}`;
       );
     }
 
-    function HRDashboard({ user, candidates, setCandidates, onRoleSwitch }) {
+    function HRDashboard({ user, candidates, setCandidates }) {
       const [opening, setOpening] = useState(null);
       const [showAddForm, setShowAddForm] = useState(false);
       const [filter, setFilter] = useState({ dept:'', step:'', type:'', q:'' });
@@ -3898,8 +3942,11 @@ ${HR_EMAIL}`;
       function updateShortlist(c, list) {
         patchCandidate(c.id, x => ({ ...x, shortlist: list }));
       }
-      function saveGeneratedDoc(c, step, data, approvers) {
+      async function saveGeneratedDoc(c, step, data, approvers) {
         const docInfo = DOC_LABELS[step];
+        const willAssign = approvers?.length && APPROVAL_STEPS.includes(step) && approvers.every(a => a.name && a.email);
+        // Block if any approver email has no real account yet (must create user first)
+        if (willAssign && !(await ensureAssigneesRegistered(approvers.map(a => a.email), showToast))) return;
         const slug = (c.name || c.position).split(' ')[0].toLowerCase().replace(/[^a-z0-9ก-๙]/gi, '');
         const docName = `${docInfo.file}-${slug}.pdf`;
         const nowIso = new Date().toISOString();
@@ -4099,610 +4146,426 @@ ${HR_EMAIL}`;
       );
     }
 
+
     // =========================================================================
-    // ===================== APPROVER ROLE =====================================
+    // ===================== "งานของฉัน" (ApproverView) =======================
+    // Real data: shows ONLY work assigned to the logged-in user (by email =
+    // username). Three channels:
+    //   • sign      → approval_workflows[1|5].approvers[].email
+    //   • assigned  → distributions[step][].email  (step 3 = shortlist view,
+    //                 step 4 = interview scorecard fill)
+    //   • probation → generated_docs[6].data.evaluator_email
+    // All actions write back to the candidate row via patchCandidate (DB).
     // =========================================================================
-    const APPROVER_SCENARIOS = {
-      step1: {
-        mode: 'sign',
-        stepNum: 1,
-        DocRenderer: 'manpower',
-        sampleDocData: {
-          proposed_date:'2026-05-15',
-          division:'Supply Chain',
-          level:'JG5',
-          jd:'• ตรวจสอบคุณภาพวัตถุดิบและสินค้าสำเร็จรูปตามมาตรฐาน GMP/HACCP\n• จัดทำรายงานข้อบกพร่อง\n• ดูแลการ calibrate เครื่องมือตรวจวัด\n• ฝึกอบรมพนักงานสายการผลิตเรื่อง QC',
-          gender:'ไม่ระบุ', age_min:25, age_max:35,
-          experience_required:'required', experience_years:3,
-          education:['ปริญญาตรี'],
-          additional:'มี certification GMP/HACCP/ISO 22000',
-          reason_type:'new_plan', replace_name:'', replace_reason:'ลาออก',
-          employment_type:'monthly', contract_months:12,
-          necessities:['เพิ่มกำลังคนเพื่อรองรับงานที่เพิ่มขึ้น','ขยายสายงานหรือแผนกใหม่'],
-          proposer_name:'คุณกุ้ง · ทศนวรรณ',
-          proposer_position:'HR Manager',
-          proposer_division:'Supply Chain',
-          hr_received_date:'2026-05-16',
-          hr_duration:'45',
-          hr_recruiter_name:'คุณแอน · อภิญญา',
-          hr_recruiter_position:'HR Recruiter'
-        },
-        label: 'Step 1 · Requisition Approval (อนุมัติเปิดอัตรา)',
-        subject: 'Request for Approval: Open Position - QC Officer (Supply Chain)',
-        fromName: 'คุณกุ้ง · ทศนวรรณ',
-        fromRole: 'HR Manager',
-        fromEmail: 'hr.manager@jiancha.com',
-        docTitle: 'แบบฟอร์มขออนุมัติกำลังคน',
-        docFileName: 'manpower-requisition-qcofficer.pdf',
-        candidate: { name:'(ยังไม่ระบุชื่อผู้สมัคร)', position:'QC Officer', department:'Supply Chain', type:'อัตราใหม่' },
-        me: { name:'คุณวิทยา รักดี', email:'wittaya@jiancha.com', role:'หัวหน้าต้นสังกัด · Head of Supply Chain', sequence:1, totalApprovers:3 },
-        chain: [
-          { name:'คุณวิทยา รักดี', role:'หัวหน้าต้นสังกัด', status:'pending' },
-          { name:'คุณกุ้ง · ทศนวรรณ', role:'HR Manager', status:'waiting' },
-          { name:'คุณภัทรา รัศมี', role:'MD / CEO', status:'waiting' }
-        ],
-        docFields: [
-          { label:'ตำแหน่ง', value:'QC Officer' },
-          { label:'แผนก/ฝ่าย', value:'Supply Chain · Quality Control' },
-          { label:'ระดับ', value:'JG5 (Officer)' },
-          { label:'จำนวนอัตรา', value:'1 อัตรา' },
-          { label:'ประเภท', value:'อัตราใหม่ ตามแผน 2569' },
-          { label:'งบประมาณ', value:'฿25,000–32,000 / เดือน' },
-          { label:'วันเริ่มงานที่ต้องการ', value:'15 มิ.ย. 2569' }
-        ],
-        docExtra: ['คุณสมบัติ: ป.ตรี วิทย์อาหาร · ประสบการณ์ 3+ ปี · GMP/HACCP', 'เหตุผล: ขยายไลน์ผลิตใหม่ · capacity +30%'],
-        emailBody: `Dear Khun Wittaya Rakdee (Department Head · Supply Chain)
+    const SIGN_DOC_RENDERER = { 1: 'manpower', 5: 'approval' };
 
-The HR team would like to request your approval for the Manpower Requisition Form for the following new position:
+    function normalizeEmail(e) {
+      return usernameToEmail(String(e || '')).toLowerCase();
+    }
 
-Position: QC Officer
-Department: Supply Chain · Quality Control
-Level: JG5 (Officer)
-Headcount: 1 (new position · per annual manpower plan 2026)
-Budget: THB 25,000–32,000 / month
-Desired start date: 15 June 2026
-
-You are approver #1 of 3 · please click the link below to review the document and sign.
-Once approved, the system will automatically forward to the HR Manager and MD/CEO in sequence.
-
-Sincerely,
-HR Team · JIAN CHA Co., Ltd.
-${HR_EMAIL}`
-      },
-      step6: {
-        mode: 'sign',
-        stepNum: 6,
-        DocRenderer: 'approval',
-        sampleDocData: {
-          division:'Finance',
-          start_date:'2026-06-01',
-          end_probation_date:'2026-09-29',
-          level:'JG5',
-          salary_current:'',
-          salary_new:'28,000',
-          salary_post_probation:'30,000',
-          allowance_items:[
-            { label:'ค่าเดินทาง', amount:'2000' },
-            { label:'ค่าตำแหน่ง', amount:'1500' }
-          ],
-          total_income: 31500,
-          remarks:'มีประกันสังคม · ประกันสุขภาพกลุ่ม · กองทุนสำรองเลี้ยงชีพ · หลังผ่านโปร 120 วันปรับเงินเดือนตามผลประเมิน',
-          reason_type:'replace',
-          replace_name:'คุณสุภาพ ก. (Senior Accountant ที่ลาออก)',
-          replace_reason:'ลาออก',
-          employment_type:'monthly',
-          contract_months:12, contract_start:'2026-06-01',
-          necessities:['ทดแทนพนักงาน'],
-          hr_received_date:'2026-05-16',
-          hr_duration:'30',
-          hr_recruiter_name:'คุณแอน · อภิญญา',
-          hr_recruiter_position:'HR Recruiter'
-        },
-        label: 'Step 5 · ขออนุมัติรับพนักงาน + ส่ง Offer',
-        subject: "Approval Required: Hire คุณอรอนงค์ พงศ์ใหม่ - Accountant (Finance)",
-        fromName: 'คุณแอน · อภิญญา',
-        fromRole: 'HR Officer',
-        fromEmail: 'hr.ann@jiancha.com',
-        docTitle: 'แบบฟอร์มขออนุมัติรับพนักงาน',
-        docFileName: 'recruitment-approval-oranong.pdf',
-        candidate: { name:'อรอนงค์ พงศ์ใหม่', position:'Accountant', department:'Finance', type:'ทดแทนคนลาออก' },
-        me: { name:'คุณสมหญิง จิตดี', email:'somying@jiancha.com', role:'Operations Director', sequence:2, totalApprovers:4 },
-        chain: [
-          { name:'คุณวิทยา รักดี', role:'HRBP Manager', status:'approved', signedAt:'2026-05-21 14:32' },
-          { name:'คุณสมหญิง จิตดี', role:'Operations Director', status:'pending' },
-          { name:'คุณวิเชียร พงศ์เจริญ', role:'CHRO', status:'waiting' },
-          { name:'คุณภัทรา รัศมี', role:'CEO', status:'waiting' }
-        ],
-        docFields: [
-          { label:'ชื่อ-นามสกุล', value:'คุณอรอนงค์ พงศ์ใหม่' },
-          { label:'ตำแหน่ง', value:'Accountant' },
-          { label:'แผนก/ฝ่าย', value:'Finance' },
-          { label:'วันเริ่มงาน', value:'1 มิ.ย. 2569' },
-          { label:'วันครบทดลองงาน', value:'29 ก.ย. 2569 (Day 120)' },
-          { label:'เงินเดือนใหม่', value:'฿28,000 / เดือน' },
-          { label:'หลังผ่านทดลอง', value:'฿30,000 / เดือน' },
-          { label:'สวัสดิการอื่น', value:'ค่าเดินทาง 2,000 · ประกันสุขภาพกลุ่ม · กองทุนสำรอง' }
-        ],
-        docExtra: ['เหตุผล: ทดแทนคุณสุภาพ ก. (Senior Accountant ที่ลาออก)', 'Interview Scorecard: 34/40 (avg 8.5) · Recommend: Hire'],
-        emailBody: `Dear Khun Somying Jitdee (Operations Director)
-
-The HR team would like to request your approval for the recruitment of the following new employee:
-
-Candidate: Khun Oranong Pongmai
-Position: Accountant · Finance Department
-Start date: 1 June 2026
-Salary: THB 28,000 / month (post-probation: THB 30,000)
-Type: Replacement for Khun Supap K. (resigned)
-
-Interview Scorecard: 34/40 (avg 8.5/10) · Hiring Manager recommends to hire
-
-You are approver #2 of 4 · Khun Wittaya (HRBP) has already approved.
-Please click the link below to review the document and sign.
-
-Sincerely,
-HR Team · JIAN CHA Co., Ltd.
-${HR_EMAIL}`
-      },
-      step3: {
-        mode: 'view',
-        stepNum: 3,
-        label: 'Step 3 · Hiring Manager รับ Shortlist',
-        subject: 'Candidate Profile: คุณวรรณกร พิภพไชย for Marketing Executive',
-        fromName: 'คุณกุ้ง · ทศนวรรณ', fromRole: 'HR Manager', fromEmail: 'hr.manager@jiancha.com',
-        me: { name: 'คุณวิเชียร พงศ์เจริญ', email: 'marketing.head@jiancha.com', role: 'Marketing Head · Hiring Manager' },
-        candidate: { name: 'คุณวรรณกร พิภพไชย', position: 'Marketing Executive', department: 'Marketing' },
-        attachments: ['resume_wannakarn.pdf', 'resume_panupong.pdf'],
-        emailBody: `Dear Khun Wichian,
-
-The HR team is forwarding the resumes of pre-screened candidates for the position of Marketing Executive (Marketing).
-
-Candidate: Khun Wannakarn Piphopchai
-Position: Marketing Executive
-Department: Marketing
-Attachments: resume_wannakarn.pdf, resume_panupong.pdf
-
-Please review and let us know which candidates you would like to invite for an interview.
-
-Sincerely,
-HR Team · JIAN CHA Co., Ltd.
-${HR_EMAIL}`,
-        instruction: 'Hiring Manager reviews resumes then replies to HR (via email) indicating which candidates to interview'
-      },
-      step5: {
-        mode: 'fill',
-        stepNum: 5,
-        formComponent: 'ScorecardForm',
-        label: 'Step 4 · ประเมินสัมภาษณ์ (Interview Scorecard)',
-        subject: 'Interview Scorecard: คุณอรอนงค์ พงศ์ใหม่ · Accountant',
-        fromName: 'คุณกุ้ง · ทศนวรรณ', fromRole: 'HR Manager', fromEmail: 'hr.manager@jiancha.com',
-        me: { name: 'คุณวิเชียร พงศ์เจริญ', email: 'finance.head@jiancha.com', role: 'Finance Manager · Evaluator' },
-        candidate: { id:'demo_eval', name: 'อรอนงค์ พงศ์ใหม่', position: 'Accountant', department: 'Finance', type: 'replacement', process_start_date: '2026-04-10' },
-        emailBody: `Dear Khun Wichian,
-
-We would like to invite you to evaluate the interview of the following candidate:
-
-Candidate: Khun Oranong Pongmai
-Position: Accountant
-Department: Finance
-Interview date: 12 May 2026
-
-Please click the link below to fill out the Interactive Scorecard (tick scores and type comments directly in the system — no PDF download needed).
-
-Sincerely,
-HR Team · JIAN CHA Co., Ltd.
-${HR_EMAIL}`,
-        instruction: 'Click "Open Form" below → tick 14 criteria scores + type comments + select conclusion → submit'
-      },
-      step8: {
-        mode: 'fill',
-        stepNum: 8,
-        formComponent: 'ProbationEvalForm',
-        label: 'Step 6 · ประเมินทดลองงาน 120 วัน (Day 30/60/90)',
-        subject: 'Probation Evaluation Request: Khun Tanawat Charoenphol · 3 Rounds (Day 30/60/90)',
-        fromName: 'คุณกุ้ง · ทศนวรรณ', fromRole: 'HR Manager', fromEmail: 'hr.manager@jiancha.com',
-        me: { name: 'คุณสมหญิง จิตดี', email: 'scm.head@jiancha.com', role: 'Supply Chain Head · Direct Manager' },
-        candidate: { id:'demo_prob', name: 'ธนวัฒน์ เจริญผล', position: 'Supply Chain Officer', department: 'Supply Chain', probation: { startDate: '2026-03-23' } },
-        emailBody: `Dear Khun Somying Jitdee,
-
-A new employee, Khun Tanawat Charoenphol, has started the probation period for the position of Supply Chain Officer. Please evaluate the employee at 3 milestones: Day 30 / 60 / 90.
-
-Start date: 23 March 2026
-Probation pass date: 20 July 2026 (Day 119)
-
-Next steps:
-• Click the link below to open the evaluation form in your browser
-• Complete the score for each round (Day 30 / 60 / 90) — 11 criteria × 1–5 per round
-• Final status at Day 119: Pass / Extend probation / Fail
-• Submit → the system will automatically return the completed document to HR
-
-Please feel free to contact the HR team if you have any questions or concerns.
-
-Sincerely,
-HR Team · JIAN CHA Co., Ltd.
-${HR_EMAIL}`,
-        instruction: 'Click "Open Form" below → fill scores for 3 rounds (Day 30/60/90) + final status at Day 119 (Pass / Extend / Fail)'
+    function buildMyTasks(candidates, myEmail) {
+      const me = normalizeEmail(myEmail);
+      const out = [];
+      if (!me) return out;
+      for (const c of (candidates || [])) {
+        const label = c.name || c.position || 'ผู้สมัคร';
+        // 1) SIGN — approval workflows
+        const wfs = c.approvalWorkflows || {};
+        for (const k of Object.keys(wfs)) {
+          const wf = wfs[k];
+          if (!wf || !Array.isArray(wf.approvers)) continue;
+          const mine = wf.approvers.find(a => normalizeEmail(a.email) === me);
+          if (!mine) continue;
+          const state = mine.status === 'approved' ? 'done'
+            : mine.status === 'rejected' ? 'rejected'
+            : mine.status === 'pending' ? 'todo' : 'waiting';
+          out.push({
+            kind: 'sign', id: `${c.id}|sign|${k}`, candidateId: c.id, candidate: c,
+            step: Number(k), wf, mine, state,
+            title: `เซ็นอนุมัติ · ${DOC_LABELS[k]?.thai || 'เอกสาร'}`, subject: label,
+          });
+        }
+        // 2) ASSIGNED — distributions (view shortlist / scorecard fill / generic)
+        const dists = c.distributions || {};
+        for (const k of Object.keys(dists)) {
+          for (const e of (dists[k] || [])) {
+            if (normalizeEmail(e.email) !== me) continue;
+            const step = Number(k);
+            const kind = step === 3 ? 'view-shortlist' : step === 4 ? 'eval-scorecard' : 'ack';
+            out.push({
+              kind, id: `${c.id}|dist|${k}|${e.id}`, candidateId: c.id, candidate: c,
+              step, entry: e, state: e.done ? 'done' : 'todo',
+              title: kind === 'view-shortlist' ? 'พิจารณา Shortlist ผู้สมัคร'
+                : kind === 'eval-scorecard' ? 'ประเมินสัมภาษณ์ (Scorecard)'
+                : 'งานที่ได้รับมอบหมาย',
+              subject: label,
+            });
+          }
+        }
+        // 3) PROBATION evaluation — generated_docs[6].data.evaluator_email
+        const pd = c.generatedDocs?.[6];
+        if (pd?.data?.evaluator_email && normalizeEmail(pd.data.evaluator_email) === me) {
+          out.push({
+            kind: 'eval-probation', id: `${c.id}|prob|6`, candidateId: c.id, candidate: c,
+            step: 6, docData: pd.data, state: pd.data.__submitted ? 'done' : 'todo',
+            title: 'ประเมินทดลองงาน (Day 30/60/90)', subject: label,
+          });
+        }
       }
+      const rank = { todo: 0, waiting: 1, rejected: 2, done: 3 };
+      return out.sort((a, b) => (rank[a.state] ?? 9) - (rank[b.state] ?? 9));
+    }
+
+    const TASK_STATE_BADGE = {
+      todo:     { txt: 'ต้องทำ',    cls: 'bg-amber-100 text-amber-800 border-amber-200' },
+      waiting:  { txt: 'รอคิว',     cls: 'bg-slate-100 text-slate-500 border-slate-200' },
+      done:     { txt: 'เสร็จแล้ว', cls: 'bg-emerald-100 text-emerald-800 border-emerald-200' },
+      rejected: { txt: 'ปฏิเสธ',    cls: 'bg-rose-100 text-rose-700 border-rose-200' },
     };
 
-    function ApproverView({ onRoleSwitch }) {
-      const [scenarioKey, setScenarioKey] = useState('step1');
+    function ApproverView({ candidates, myEmail, myName, patchCandidate }) {
+      const tasks = useMemo(() => buildMyTasks(candidates, myEmail), [candidates, myEmail]);
+      const [activeId, setActiveId] = useState(null);
       const [signature, setSignature] = useState(null);
-      const [signed, setSigned] = useState(false);
       const [rejectMode, setRejectMode] = useState(false);
       const [rejectReason, setRejectReason] = useState('');
-      const [showFullEmail, setShowFullEmail] = useState(false);
-      const [showDocAfterSign, setShowDocAfterSign] = useState(false);
-      const [activeForm, setActiveForm] = useState(null);
-      const [actionDone, setActionDone] = useState(null); // 'confirmed' | 'declined' | 'view-ack' | 'form-submitted' | 'uploaded'
-      const [submittedDoc, setSubmittedDoc] = useState(null); // ข้อมูลฟอร์มประเมินที่กรอกเสร็จ → ใช้เรนเดอร์เอกสารสำเร็จ
-      const [shortlistVerdicts, setShortlistVerdicts] = useState({}); // Step 3: ผล ผ่าน/ไม่ผ่าน รายผู้สมัคร (key = ชื่อไฟล์)
+      const [showForm, setShowForm] = useState(false);
+      const [showDoc, setShowDoc] = useState(false);
+      const [verdicts, setVerdicts] = useState({});
 
-      const sc = APPROVER_SCENARIOS[scenarioKey];
-      const candidate = sc.candidate;
-      const sender = { name: sc.fromName, role: sc.fromRole, email: sc.fromEmail };
-      const me = sc.me;
-      const others = sc.chain;
-      const isSign = sc.mode === 'sign';
+      const active = tasks.find(t => t.id === activeId) || null;
 
-      // ===== Non-sign scenarios (Step 3, 4, 5, 7, 8) =====
-      if (!isSign) {
-        const accentMap = {
-          view:    { badgeBg:'bg-sky-100',     badgeText:'text-sky-700',     badgeBorder:'border-sky-200',     gradient:'from-sky-50',     panelBorder:'border-sky-200' },
-          confirm: { badgeBg:'bg-amber-100',   badgeText:'text-amber-700',   badgeBorder:'border-amber-200',   gradient:'from-amber-50',   panelBorder:'border-amber-200' },
-          fill:    { badgeBg:'bg-violet-100',  badgeText:'text-violet-700',  badgeBorder:'border-violet-200',  gradient:'from-violet-50',  panelBorder:'border-violet-200' },
-          upload:  { badgeBg:'bg-emerald-100', badgeText:'text-emerald-700', badgeBorder:'border-emerald-200', gradient:'from-emerald-50', panelBorder:'border-emerald-200' }
-        };
-        const ac = accentMap[sc.mode];
-        const modeBadge = { view:'📄 View Only', confirm:'✓ RSVP', fill:'📝 Fillable Form', upload:'📤 Upload Page' }[sc.mode];
-        const FormComp = sc.mode === 'fill' ? { ScorecardForm, ProbationEvalForm }[sc.formComponent] : null;
+      const backToList = () => {
+        setActiveId(null); setSignature(null); setRejectMode(false);
+        setRejectReason(''); setShowForm(false); setShowDoc(false); setVerdicts({});
+      };
 
+      // ---- write-back handlers ----
+      const [signing, setSigning] = useState(false);
+      async function doSign(task) {
+        if (!signature) { showToast('กรุณาวาดลายเซ็นก่อน', 'warning'); return; }
+        setSigning(true);
+        const ip = await getClientIp();   // real IP for audit trail (or '-' if unavailable)
+        patchCandidate(task.candidateId, x => {
+          const wfs = { ...(x.approvalWorkflows || {}) };
+          const wf = { ...wfs[task.step] };
+          const approvers = (wf.approvers || []).map(a => ({ ...a }));
+          const i = approvers.findIndex(a => normalizeEmail(a.email) === normalizeEmail(task.mine.email));
+          if (i < 0) return x;
+          approvers[i] = { ...approvers[i], status: 'approved', signedAt: new Date().toISOString(), ip, signature_data: signature };
+          const nextIdx = approvers.findIndex(a => a.status === 'waiting');
+          if (nextIdx >= 0) { approvers[nextIdx] = { ...approvers[nextIdx], status: 'pending' }; wf.status = 'in_progress'; }
+          else { wf.status = 'completed'; wf.completedAt = new Date().toISOString(); }
+          wf.approvers = approvers;
+          wfs[task.step] = wf;
+          return { ...x, approvalWorkflows: wfs };
+        });
+        showToast('✓ ลงนามเรียบร้อย · บันทึกลงระบบแล้ว', 'success');
+        setSigning(false);
+        backToList();
+      }
+
+      function doReject(task) {
+        if (!rejectReason.trim()) return;
+        patchCandidate(task.candidateId, x => {
+          const wfs = { ...(x.approvalWorkflows || {}) };
+          const wf = { ...wfs[task.step] };
+          wf.approvers = (wf.approvers || []).map(a =>
+            normalizeEmail(a.email) === normalizeEmail(task.mine.email)
+              ? { ...a, status: 'rejected', rejectedAt: new Date().toISOString(), rejectReason: rejectReason.trim() }
+              : { ...a });
+          wf.status = 'rejected';
+          wfs[task.step] = wf;
+          return { ...x, approvalWorkflows: wfs };
+        });
+        showToast('ส่งคำปฏิเสธให้ HR แล้ว', 'warning');
+        backToList();
+      }
+
+      function saveScorecard(task, data) {
+        patchCandidate(task.candidateId, x => {
+          const gd = { ...(x.generatedDocs || {}) };
+          gd[4] = { docName: gd[4]?.docName || 'interview-evaluation.pdf', data, createdAt: new Date().toISOString(), createdBy: myName };
+          const dists = { ...(x.distributions || {}) };
+          dists[4] = (dists[4] || []).map(e => e.id === task.entry.id ? { ...e, done: true, completedAt: new Date().toISOString() } : e);
+          return { ...x, generatedDocs: gd, distributions: dists };
+        });
+        showToast('✓ ส่งผลประเมินกลับ HR แล้ว', 'success');
+        backToList();
+      }
+
+      function saveProbation(task, data) {
+        patchCandidate(task.candidateId, x => {
+          const gd = { ...(x.generatedDocs || {}) };
+          gd[6] = { ...(gd[6] || {}), data: { ...data, __submitted: true }, updatedAt: new Date().toISOString() };
+          return { ...x, generatedDocs: gd };
+        });
+        showToast('✓ ส่งผลประเมินทดลองงานกลับ HR แล้ว', 'success');
+        backToList();
+      }
+
+      function saveShortlistVerdict(task) {
+        patchCandidate(task.candidateId, x => {
+          const dists = { ...(x.distributions || {}) };
+          dists[3] = (dists[3] || []).map(e => e.id === task.entry.id ? { ...e, verdicts, done: true, completedAt: new Date().toISOString() } : e);
+          return { ...x, distributions: dists };
+        });
+        showToast('✓ ส่งผลพิจารณากลับ HR แล้ว', 'success');
+        backToList();
+      }
+
+      function markAckDone(task) {
+        patchCandidate(task.candidateId, x => {
+          const dists = { ...(x.distributions || {}) };
+          dists[task.step] = (dists[task.step] || []).map(e => e.id === task.entry.id ? { ...e, done: true, completedAt: new Date().toISOString() } : e);
+          return { ...x, distributions: dists };
+        });
+        showToast('✓ รับทราบงานแล้ว', 'success');
+        backToList();
+      }
+
+      // ---- LIST VIEW ----
+      if (!active) {
+        const todo = tasks.filter(t => t.state === 'todo');
+        const others = tasks.filter(t => t.state !== 'todo');
         return (
           <div className="min-h-screen py-6 px-4">
             <div className="max-w-3xl mx-auto">
-              {/* Scenario selector */}
-              <div className="flex items-center justify-between mb-3 gap-2 flex-wrap">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="text-xs text-slate-500 whitespace-nowrap">📥 งานของฉัน · เลือกงานที่ได้รับมอบหมาย:</span>
-                  <select value={scenarioKey} onChange={e => { setScenarioKey(e.target.value); setSigned(false); setSignature(null); setShowFullEmail(false); setActionDone(null); setActiveForm(null); setShowDocAfterSign(false); setSubmittedDoc(null); setShortlistVerdicts({}); }} className="text-xs border border-slate-300 rounded-lg px-2 py-1.5 bg-white">
-                    {Object.entries(APPROVER_SCENARIOS).sort(([,a],[,b]) => a.stepNum - b.stepNum).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
-                  </select>
-                  <span className={`text-[10px] px-2 py-0.5 rounded-full ${ac.badgeBg} ${ac.badgeText} border ${ac.badgeBorder}`}>{modeBadge}</span>
-                </div>
-                <button onClick={onRoleSwitch} className="text-xs bg-slate-100 hover:bg-slate-200 px-2 py-1.5 rounded-lg">🎭 เปลี่ยน role</button>
+              <div className="mb-4">
+                <h1 className="text-xl font-semibold text-slate-900">📥 งานของฉัน</h1>
+                <p className="text-xs text-slate-500 mt-1">{myName} · {myEmail} · งานที่ถูกมอบหมายให้คุณโดยตรง</p>
               </div>
 
-              {/* Recipient summary */}
-              <div className={`bg-gradient-to-br ${ac.gradient} to-white border ${ac.panelBorder} rounded-2xl p-5 mb-4 shadow-sm`}>
-                <h1 className="text-lg font-semibold text-slate-900">{sc.label}</h1>
-                <div className="text-sm text-slate-600 mb-2">{candidate?.name && `${candidate.name} · `}{candidate?.position}{candidate?.department && ` · ${candidate.department}`}</div>
-                <div className="text-sm text-slate-700 bg-white border border-slate-200 rounded-lg p-2 mt-2">
-                  เรียนคุณ <b>{me.name}</b> · {me.role}<br />
-                  <span className="text-xs text-slate-600 italic">{sc.instruction}</span>
+              {tasks.length === 0 && (
+                <div className="bg-white border border-slate-200 rounded-2xl p-10 text-center">
+                  <div className="text-5xl mb-3">✅</div>
+                  <div className="text-sm font-medium text-slate-700">ยังไม่มีงานที่มอบหมายให้คุณ</div>
+                  <div className="text-xs text-slate-400 mt-1">เมื่อ HR มอบหมายงานอนุมัติ/ประเมินมาที่อีเมลนี้ จะแสดงที่นี่</div>
                 </div>
-              </div>
-
-              {/* Mode-specific action area */}
-              {sc.mode === 'view' && (
-                <>
-                  <div className="bg-white border border-slate-200 rounded-2xl p-5 mb-4">
-                    <div className="text-xs font-semibold text-slate-600 mb-3">👥 ผู้สมัครที่ส่งมาให้พิจารณา ({sc.attachments.length} คน) · กดผลรายคน → สถานะส่งกลับ HR</div>
-                    {sc.attachments.map((a, i) => {
-                      const v = shortlistVerdicts[a];
-                      return (
-                        <div key={i} className="bg-slate-50 border border-slate-200 rounded-lg p-3 mb-2">
-                          <div className="flex items-center justify-between gap-2 flex-wrap">
-                            <span className="text-sm flex-1 min-w-0 truncate">📄 {a}</span>
-                            <div className="flex items-center gap-2 flex-wrap">
-                              <button onClick={() => showToast(`📥 ดาวน์โหลด ${a}`, 'info')} className="text-xs bg-sky-600 hover:bg-sky-700 text-white px-3 py-1 rounded-lg ibtn">↓ ดาวน์โหลด</button>
-                              {!v ? (
-                                <>
-                                  <button onClick={() => { setShortlistVerdicts(prev => ({ ...prev, [a]:'pass' })); showToast(`✓ ส่งผล "ผ่าน" (${a}) กลับ HR · ให้นัดสัมภาษณ์`, 'success'); }}
-                                    className="text-xs bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1 rounded-lg ibtn">✓ ผ่าน</button>
-                                  <button onClick={() => { setShortlistVerdicts(prev => ({ ...prev, [a]:'reject' })); showToast(`✕ ส่งผล "ไม่ผ่าน" (${a}) กลับ HR`, 'warning'); }}
-                                    className="text-xs border-2 border-rose-300 text-rose-700 hover:bg-rose-50 px-3 py-1 rounded-lg ibtn">✕ ไม่ผ่าน</button>
-                                </>
-                              ) : (
-                                <span className={`text-xs font-medium px-2.5 py-1 rounded-lg border ${v === 'pass' ? 'bg-emerald-100 text-emerald-800 border-emerald-300' : 'bg-rose-100 text-rose-700 border-rose-300'}`}>
-                                  {v === 'pass' ? '✓ ผ่าน · ให้นัดสัมภาษณ์' : '✕ ไม่ผ่าน'}
-                                  <button onClick={() => setShortlistVerdicts(prev => { const n = { ...prev }; delete n[a]; return n; })} className="ml-2 text-slate-400 hover:text-slate-700">↺</button>
-                                </span>
-                              )}
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                  {Object.keys(shortlistVerdicts).length > 0 && (
-                    <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 text-center text-sm text-emerald-900">
-                      ✓ ส่งผลกลับ HR แล้ว {Object.keys(shortlistVerdicts).length}/{sc.attachments.length} คน · HR เห็นสถานะรายคนในการ์ด Shortlist · {fmtDateTime(new Date().toISOString())}
-                    </div>
-                  )}
-                </>
               )}
 
-              {sc.mode === 'confirm' && (
-                <>
-                  <div className="bg-white border border-slate-200 rounded-2xl p-5 mb-4">
-                    <div className="text-xs font-semibold text-slate-600 mb-3">📅 รายละเอียดการนัด</div>
-                    <table className="w-full text-sm">
-                      <tbody>
-                        <tr><td className="text-slate-500 py-1.5 pr-3">วัน-เวลา:</td><td className="font-medium">{sc.interview.date} · {sc.interview.time}</td></tr>
-                        <tr><td className="text-slate-500 py-1.5 pr-3">สถานที่:</td><td>{sc.interview.venue}</td></tr>
-                        <tr><td className="text-slate-500 py-1.5 pr-3">แผนที่:</td><td><a href={sc.interview.mapUrl} target="_blank" className="text-sky-600 hover:underline">🗺 เปิดแผนที่</a></td></tr>
-                      </tbody>
-                    </table>
+              {todo.length > 0 && (
+                <div className="mb-4">
+                  <div className="text-xs font-semibold text-amber-700 mb-2">⏳ รอดำเนินการ ({todo.length})</div>
+                  <div className="space-y-2">
+                    {todo.map(t => <TaskCard key={t.id} t={t} onOpen={() => setActiveId(t.id)} />)}
                   </div>
-                  {!actionDone ? (
-                    <div className="flex flex-col sm:flex-row gap-2">
-                      <button onClick={() => { setActionDone('confirmed'); showToast('Confirm เข้าสัมภาษณ์แล้ว', 'success'); }}
-                        className="flex-1 py-3 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-medium text-sm ibtn">
-                        ✓ ยืนยันเข้าสัมภาษณ์
-                      </button>
-                      <button onClick={() => { setActionDone('declined'); showToast('ขอเลื่อนนัด · HR จะติดต่อกลับ', 'warning'); }}
-                        className="flex-1 py-3 rounded-xl border-2 border-slate-300 text-slate-700 hover:bg-slate-50 font-medium text-sm ibtn">
-                        ⟲ ขอเลื่อนนัด
-                      </button>
-                    </div>
-                  ) : (
-                    <div className={`${actionDone === 'confirmed' ? 'bg-emerald-50 border-emerald-200 text-emerald-900' : 'bg-amber-50 border-amber-200 text-amber-900'} border rounded-xl p-4 text-center text-sm`}>
-                      {actionDone === 'confirmed' ? '✓ ยืนยันเข้าสัมภาษณ์แล้ว' : '⟲ ส่งคำขอเลื่อนนัดให้ HR แล้ว'} · {fmtDateTime(new Date().toISOString())}
-                    </div>
-                  )}
-                </>
+                </div>
               )}
 
-              {sc.mode === 'fill' && (
-                <>
-                  <div className="bg-white border border-slate-200 rounded-2xl p-5 mb-4 text-center">
-                    <div className="text-5xl mb-3">📝</div>
-                    <div className="text-sm font-semibold text-slate-900 mb-1">Interactive Form พร้อมแล้ว</div>
-                    <div className="text-xs text-slate-500 mb-4">ติกคะแนน + พิมพ์ความเห็นในระบบ · ไม่ต้องดาวน์โหลด PDF</div>
-                    {!actionDone ? (
-                      <button onClick={() => setActiveForm(true)}
-                        className="bg-violet-600 hover:bg-violet-700 text-white px-6 py-3 rounded-xl font-medium text-sm ibtn">
-                        📝 เปิดฟอร์มประเมิน (เช็คลิสต์ + คอมเมนต์)
-                      </button>
-                    ) : (
-                      <div className="space-y-3">
-                        <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 text-emerald-900">
-                          ✓ ประเมินเสร็จ · ส่งฟอร์มกลับ HR แล้ว · {fmtDateTime(new Date().toISOString())}
-                        </div>
-                        <button onClick={() => setShowDocAfterSign(true)}
-                          className="w-full bg-sky-600 hover:bg-sky-700 text-white px-4 py-2.5 rounded-xl font-medium text-sm ibtn">
-                          📄 ดูเอกสารประเมินที่เสร็จแล้ว
-                        </button>
-                        <div className="text-[11px] text-slate-400">* ดูเอกสารฉบับสมบูรณ์ได้หลังประเมินเสร็จเท่านั้น</div>
-                      </div>
-                    )}
-                  </div>
-                  {activeForm && FormComp && (
-                    <FormComp candidate={candidate} user={{ name: me.name }} onClose={() => setActiveForm(false)}
-                      onSave={(data) => { setSubmittedDoc(data || {}); setActiveForm(false); setActionDone('form-submitted'); showToast('✓ ประเมินเสร็จ · ส่งฟอร์มกลับ HR แล้ว', 'success'); }} />
-                  )}
-                </>
-              )}
-
-              {sc.mode === 'upload' && (
-                <>
-                  <div className="bg-white border border-slate-200 rounded-2xl p-5 mb-4">
-                    <div className="text-xs font-semibold text-slate-600 mb-3">📄 เอกสารที่ต้อง upload ({sc.docList.length} รายการ)</div>
-                    <ul className="space-y-1.5">
-                      {sc.docList.map((d, i) => (
-                        <li key={i} className="text-sm bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">{i+1}. {d}</li>
-                      ))}
-                    </ul>
-                  </div>
-                  <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 text-center text-sm text-emerald-900">
-                    💡 หน้าตา upload จริง · ดูใน role <b>"🌸 Candidate"</b> (กดเปลี่ยน role)
-                    <div className="mt-3">
-                      <button onClick={onRoleSwitch} className="text-xs bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-2 rounded-lg ibtn">เปิด Candidate role</button>
-                    </div>
-                  </div>
-                </>
-              )}
-
-              {sc.mode === 'fill' && showDocAfterSign && submittedDoc && (
-                <div className="fixed inset-0 z-40 bg-slate-900/40 backdrop-blur-sm overflow-y-auto p-2 sm:p-6" onClick={() => setShowDocAfterSign(false)}>
-                  <div className="bg-white rounded-2xl shadow-xl border border-slate-200 w-full max-w-3xl mx-auto my-2 sm:my-8" onClick={(e) => e.stopPropagation()}>
-                    <div className="flex items-start justify-between p-4 border-b border-slate-100 sticky top-0 bg-white rounded-t-2xl z-10 no-print">
-                      <div className="min-w-0">
-                        <div className="text-base font-semibold text-slate-900">📄 เอกสารประเมินที่เสร็จแล้ว</div>
-                        <div className="text-xs text-slate-500">บันทึกคะแนน + ความเห็นของคุณเรียบร้อย · ส่งกลับ HR แล้ว</div>
-                      </div>
-                      <button onClick={() => setShowDocAfterSign(false)} className="p-1 rounded-lg hover:bg-slate-100 text-slate-500">✕</button>
-                    </div>
-                    <div className="p-6 sm:p-10 print-document">
-                      {(() => { const EvalDoc = { ScorecardForm: ScorecardDoc, ProbationEvalForm: ProbationEvalDoc }[sc.formComponent]; return EvalDoc ? <EvalDoc data={submittedDoc} candidate={candidate} /> : <div className="text-sm text-slate-500">เอกสารพร้อมแล้ว</div>; })()}
-                    </div>
+              {others.length > 0 && (
+                <div>
+                  <div className="text-xs font-semibold text-slate-500 mb-2">📋 งานอื่นๆ ({others.length})</div>
+                  <div className="space-y-2">
+                    {others.map(t => <TaskCard key={t.id} t={t} onOpen={() => setActiveId(t.id)} />)}
                   </div>
                 </div>
               )}
 
               <div className="bg-sky-50 border border-sky-200 rounded-xl p-3 text-xs text-sky-800 mt-4">
-                🔐 <b>ความปลอดภัยในระบบ</b> · เข้าระบบด้วยบัญชีพนักงาน (อีเมล + รหัส) · ทุก action บันทึก IP + เวลา ลง audit log
+                🔐 เข้าระบบด้วยบัญชีพนักงาน · ทุกการลงนาม/ประเมินบันทึกเวลาลงระบบเพื่อ audit
               </div>
             </div>
           </div>
         );
       }
 
-      if (signed) {
-        const nextApprover = sc.chain[me.sequence] ?? null;
-        // Build signed candidate to render doc with my signature in workflow
-        const signedCandidate = {
-          ...sc.candidate,
-          approvalWorkflows: {
-            [sc.stepNum]: {
-              status: nextApprover ? 'in_progress' : 'completed',
-              approvers: sc.chain.map((p, i) => {
-                if (i === me.sequence - 1) {
-                  return { ...p, status:'approved', signedAt:new Date().toISOString(), ip:'203.144.1.42', signature_data: signature };
-                }
-                return p;
-              })
-            }
-          }
-        };
-        const DocComp = sc.DocRenderer === 'manpower' ? ManpowerRequestDoc : ApprovalDoc;
-        return (
-          <div className="min-h-screen flex items-center justify-center p-6">
-            <div className="bg-white rounded-2xl border border-emerald-200 shadow-xl max-w-md w-full p-8 text-center">
-              <div className="text-5xl mb-3">🎉</div>
-              <h1 className="text-xl font-semibold text-slate-900 mb-2">ขอบคุณที่ลงนาม</h1>
-              <p className="text-sm text-slate-600 mb-4">
-                ระบบบันทึกลายเซ็นของคุณเรียบร้อยแล้ว ·
-                {nextApprover
-                  ? <> กำลังส่งต่อให้ <b>{nextApprover.name} ({nextApprover.role})</b> เป็นลำดับถัดไป</>
-                  : <> <b>อนุมัติครบทุกคนแล้ว</b> · ส่งกลับให้ HR ดำเนินการต่อ</>}
-              </p>
-              <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 text-xs text-slate-600 text-left mb-3">
-                <div><b>ลงนาม:</b> {fmtDateTime(new Date().toISOString())}</div>
-                <div><b>IP:</b> 203.144.1.42</div>
-                <div><b>เอกสาร hash:</b> a3f8e9...4b21</div>
-              </div>
-              <button onClick={() => setShowDocAfterSign(true)} className="w-full text-sm bg-sky-600 hover:bg-sky-700 text-white px-3 py-2 rounded-lg ibtn mb-2">
-                📄 ดูเอกสารพร้อมลายเซ็นของคุณ
-              </button>
-              <button onClick={onRoleSwitch} className="text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-2 rounded-lg ibtn">🎭 เปลี่ยน role</button>
-            </div>
-
-            {showDocAfterSign && (
-              <div className="fixed inset-0 z-40 bg-slate-900/40 backdrop-blur-sm overflow-y-auto p-2 sm:p-6" onClick={() => setShowDocAfterSign(false)}>
-                <div className="bg-white rounded-2xl shadow-xl border border-slate-200 w-full max-w-3xl mx-auto my-2 sm:my-8" onClick={(e) => e.stopPropagation()}>
-                  <div className="flex items-start justify-between p-4 border-b border-slate-100 sticky top-0 bg-white rounded-t-2xl z-10 no-print">
-                    <div className="min-w-0">
-                      <div className="text-base font-semibold text-slate-900">📄 {sc.docTitle} · พร้อมลายเซ็นของคุณ</div>
-                      <div className="text-xs text-slate-500">ลายเซ็นของคุณอยู่ในกรอบลำดับที่ {me.sequence} ของช่องลงนามด้านล่าง</div>
-                    </div>
-                    <button onClick={() => setShowDocAfterSign(false)} className="p-1 rounded-lg hover:bg-slate-100 text-slate-500">✕</button>
-                  </div>
-                  <div className="px-4 pt-2 pb-1 bg-emerald-50 border-b border-emerald-200 text-[11px] text-emerald-900">
-                    ✓ ลายเซ็นของคุณ ({me.name} · {me.role}) ปรากฏในเอกสารแล้ว · เลื่อนลงดูส่วนลงนามท้ายเอกสาร
-                  </div>
-                  <div className="p-6 sm:p-10 print-document">
-                    <DocComp data={sc.sampleDocData} candidate={signedCandidate} />
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
-        );
-      }
-      if (rejectMode) {
-        return (
-          <div className="min-h-screen flex items-center justify-center p-6">
-            <div className="bg-white rounded-2xl border border-rose-200 shadow-xl max-w-md w-full p-6">
-              <h1 className="text-lg font-semibold text-slate-900 mb-3">ปฏิเสธคำขอ</h1>
-              <p className="text-sm text-slate-600 mb-3">กรุณาระบุเหตุผลที่ปฏิเสธ — ระบบจะแจ้ง HR ให้ทราบทันที</p>
-              <textarea rows={4} value={rejectReason} onChange={e => setRejectReason(e.target.value)} className="input" placeholder="เหตุผล..." />
-              <div className="flex justify-end gap-2 mt-3">
-                <button onClick={() => setRejectMode(false)} className="px-3 py-2 text-sm text-slate-600 hover:text-slate-900">ยกเลิก</button>
-                <button onClick={() => { showToast('ส่งคำปฏิเสธให้ HR แล้ว', 'warning'); setRejectMode(false); onRoleSwitch(); }}
-                  disabled={!rejectReason.trim()}
-                  className={`px-4 py-2 text-sm rounded-lg ${rejectReason.trim() ? 'bg-rose-600 hover:bg-rose-700 text-white' : 'bg-slate-200 text-slate-400'}`}>
-                  ส่งคำปฏิเสธ
-                </button>
-              </div>
-            </div>
-          </div>
-        );
-      }
+      // ---- DETAIL VIEW ----
+      const c = active.candidate;
+      const badge = TASK_STATE_BADGE[active.state];
 
       return (
         <div className="min-h-screen py-6 px-4">
           <div className="max-w-3xl mx-auto">
-            {/* Scenario selector + role switcher */}
-            <div className="flex items-center justify-between mb-3 gap-2 flex-wrap">
-              <div className="flex items-center gap-2 flex-wrap">
-                <span className="text-xs text-slate-500 whitespace-nowrap">📥 งานของฉัน · เลือกงานที่ได้รับมอบหมาย:</span>
-                <select value={scenarioKey} onChange={e => { setScenarioKey(e.target.value); setSigned(false); setSignature(null); setShowFullEmail(false); }} className="text-xs border border-slate-300 rounded-lg px-2 py-1.5 bg-white">
-                  {Object.entries(APPROVER_SCENARIOS).sort(([,a],[,b]) => a.stepNum - b.stepNum).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
-                </select>
-              </div>
-              <button onClick={onRoleSwitch} className="text-xs bg-slate-100 hover:bg-slate-200 px-2 py-1.5 rounded-lg">🎭 เปลี่ยน role</button>
-            </div>
+            <button onClick={backToList} className="text-xs text-slate-500 hover:text-slate-800 mb-3">← กลับไปงานของฉัน</button>
 
-            {/* Approval request summary */}
             <div className="bg-gradient-to-br from-sky-50 to-white border border-sky-200 rounded-2xl p-5 mb-4 shadow-sm">
-              <h1 className="text-lg font-semibold text-slate-900">{sc.docTitle}</h1>
-              <div className="text-sm text-slate-600 mb-2">{candidate.name && candidate.name !== '(ยังไม่ระบุชื่อผู้สมัคร)' ? `${candidate.name} · ` : ''}{candidate.position} · {candidate.department}</div>
-              <div className="text-sm text-slate-700 bg-white border border-slate-200 rounded-lg p-2 mt-2">
-                เรียนคุณ <b>{me.name}</b> · {me.role}<br />
-                ท่านเป็นผู้อนุมัติลำดับที่ <b>{me.sequence}/{me.totalApprovers}</b> · กรุณาตรวจสอบเอกสารและลงนามด้านล่าง
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <h1 className="text-lg font-semibold text-slate-900">{active.title}</h1>
+                <span className={`text-[10px] px-2 py-0.5 rounded-full border ${badge.cls}`}>{badge.txt}</span>
               </div>
+              <div className="text-sm text-slate-600 mt-1">{c.name && c.name !== '(ยังไม่ระบุชื่อผู้สมัคร)' ? `${c.name} · ` : ''}{c.position}{c.department ? ` · ${c.department}` : ''}</div>
             </div>
 
-            {/* Document preview — dynamic per scenario */}
-            <div className="bg-white border border-slate-200 rounded-2xl p-5 mb-4">
-              <div className="text-xs font-semibold text-slate-600 mb-2">📎 เอกสารแนบ · {sc.docFileName}</div>
-              <div className="bg-slate-50 border border-slate-200 rounded-xl p-5 space-y-3 text-sm">
-                <div className="text-center border-b border-slate-300 pb-2 mb-2">
-                  <JianchaLogo size={36} />
-                  <div className="font-semibold text-slate-900 mt-1">{sc.docTitle}</div>
-                </div>
-                <div className="grid grid-cols-2 gap-x-3 gap-y-1.5 text-xs">
-                  {sc.docFields.map((f, i) => (
-                    <div key={i}><span className="text-slate-500">{f.label}:</span> <b>{f.value}</b></div>
-                  ))}
-                </div>
-                <div className="border-t border-slate-200 pt-2 text-xs text-slate-600">
-                  <b>หมายเหตุ/เอกสารประกอบ:</b>
-                  <ul className="list-disc list-inside ml-2 mt-1 space-y-0.5">
-                    {sc.docExtra.map((line, i) => <li key={i}>{line}</li>)}
-                  </ul>
-                </div>
-                <div className="text-center text-[10px] text-slate-400 italic mt-3">[ในระบบจริง embed PDF viewer ที่นี่ + scroll ดูเอกสารต้นฉบับได้]</div>
-              </div>
-            </div>
+            {/* ===== SIGN ===== */}
+            {active.kind === 'sign' && (() => {
+              const docData = c.generatedDocs?.[active.step]?.data || {};
+              const DocComp = SIGN_DOC_RENDERER[active.step] === 'manpower' ? ManpowerRequestDoc : ApprovalDoc;
+              const approvers = active.wf.approvers || [];
+              return (
+                <>
+                  <div className="bg-white border border-slate-200 rounded-2xl p-5 mb-4">
+                    <div className="text-xs font-semibold text-slate-600 mb-2">📎 เอกสาร · {c.generatedDocs?.[active.step]?.docName || ''}</div>
+                    <div className="border border-slate-200 rounded-xl p-4 print-document">
+                      <DocComp data={docData} candidate={c} />
+                    </div>
+                  </div>
 
-            {/* Approval chain status */}
-            <div className="bg-white border border-slate-200 rounded-2xl p-5 mb-4">
-              <div className="text-xs font-semibold text-slate-600 mb-2">📋 ลำดับการอนุมัติ</div>
-              <ol className="space-y-2">
-                {others.map((p, i) => {
-                  const isMe = p.name === me.name;
-                  const tone = p.status === 'approved' ? 'bg-emerald-100 text-emerald-800 border-emerald-200' : p.status === 'pending' ? 'bg-sky-100 text-sky-800 border-sky-200' : 'bg-slate-100 text-slate-500 border-slate-200';
+                  <div className="bg-white border border-slate-200 rounded-2xl p-5 mb-4">
+                    <div className="text-xs font-semibold text-slate-600 mb-2">📋 ลำดับการอนุมัติ</div>
+                    <ol className="space-y-2">
+                      {approvers.map((p, i) => {
+                        const isMe = normalizeEmail(p.email) === normalizeEmail(active.mine.email);
+                        const tone = p.status === 'approved' ? 'bg-emerald-100 text-emerald-800 border-emerald-200'
+                          : p.status === 'rejected' ? 'bg-rose-100 text-rose-700 border-rose-200'
+                          : p.status === 'pending' ? 'bg-sky-100 text-sky-800 border-sky-200'
+                          : 'bg-slate-100 text-slate-500 border-slate-200';
+                        return (
+                          <li key={i} className={`flex items-center gap-3 p-2.5 rounded-lg border ${tone} ${isMe ? 'ring-2 ring-sky-400' : ''}`}>
+                            <span className="w-6 h-6 rounded-full bg-white grid place-items-center text-xs font-bold">{i + 1}</span>
+                            <div className="flex-1 text-sm">
+                              <div className="font-medium">{p.name} {isMe && <span className="text-xs text-sky-700">(คุณ)</span>}</div>
+                              <div className="text-xs">{p.role}</div>
+                            </div>
+                            <div className="text-xs">
+                              {p.status === 'approved' && `✓ เซ็นแล้ว ${fmtDateTime(p.signedAt)}`}
+                              {p.status === 'pending' && 'รอลงนาม'}
+                              {p.status === 'waiting' && 'รอคิว'}
+                              {p.status === 'rejected' && '✕ ปฏิเสธ'}
+                            </div>
+                          </li>
+                        );
+                      })}
+                    </ol>
+                  </div>
+
+                  {active.state === 'todo' && !rejectMode && (
+                    <>
+                      <div className="bg-white border border-slate-200 rounded-2xl p-5 mb-4">
+                        <div className="text-xs font-semibold text-slate-600 mb-2">✍️ ลายเซ็น</div>
+                        <SignaturePad onChange={setSignature} />
+                      </div>
+                      <div className="flex flex-col sm:flex-row gap-2 mb-4">
+                        <button onClick={() => doSign(active)} disabled={!signature || signing}
+                          className={`flex-1 py-3 rounded-xl text-white font-medium text-sm ibtn ${signature && !signing ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-emerald-300 cursor-not-allowed'}`}>
+                          {signing ? 'กำลังลงนาม…' : '✓ ลงนามและอนุมัติ'}
+                        </button>
+                        <button onClick={() => setRejectMode(true)} className="flex-1 py-3 rounded-xl border-2 border-rose-300 text-rose-700 hover:bg-rose-50 font-medium text-sm ibtn">
+                          ✕ ปฏิเสธพร้อมเหตุผล
+                        </button>
+                      </div>
+                    </>
+                  )}
+
+                  {active.state === 'todo' && rejectMode && (
+                    <div className="bg-white border border-rose-200 rounded-2xl p-5 mb-4">
+                      <div className="text-sm font-semibold text-slate-900 mb-2">ปฏิเสธคำขอ</div>
+                      <textarea rows={3} value={rejectReason} onChange={e => setRejectReason(e.target.value)} className="input" placeholder="ระบุเหตุผล..." />
+                      <div className="flex justify-end gap-2 mt-3">
+                        <button onClick={() => { setRejectMode(false); setRejectReason(''); }} className="px-3 py-2 text-sm text-slate-600 hover:text-slate-900">ยกเลิก</button>
+                        <button onClick={() => doReject(active)} disabled={!rejectReason.trim()}
+                          className={`px-4 py-2 text-sm rounded-lg ${rejectReason.trim() ? 'bg-rose-600 hover:bg-rose-700 text-white' : 'bg-slate-200 text-slate-400'}`}>ส่งคำปฏิเสธ</button>
+                      </div>
+                    </div>
+                  )}
+
+                  {active.state === 'waiting' && (
+                    <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-center text-sm text-amber-900 mb-4">⏳ รอผู้อนุมัติลำดับก่อนหน้าเซ็นก่อน · ระบบจะแจ้งเมื่อถึงตาคุณ</div>
+                  )}
+                  {active.state === 'done' && (
+                    <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 text-center text-sm text-emerald-900 mb-4">✓ คุณลงนามเอกสารนี้แล้ว</div>
+                  )}
+                  {active.state === 'rejected' && (
+                    <div className="bg-rose-50 border border-rose-200 rounded-xl p-4 text-center text-sm text-rose-800 mb-4">✕ เอกสารนี้ถูกปฏิเสธ</div>
+                  )}
+                </>
+              );
+            })()}
+
+            {/* ===== EVAL: SCORECARD ===== */}
+            {active.kind === 'eval-scorecard' && (
+              <>
+                <div className="bg-white border border-slate-200 rounded-2xl p-5 mb-4 text-center">
+                  <div className="text-5xl mb-3">📝</div>
+                  <div className="text-sm font-semibold text-slate-900 mb-1">แบบประเมินการสัมภาษณ์</div>
+                  <div className="text-xs text-slate-500 mb-4">ติ๊กคะแนน + พิมพ์ความเห็นในระบบ · ไม่ต้องดาวน์โหลด PDF</div>
+                  {active.state === 'done'
+                    ? <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 text-emerald-900">✓ ส่งผลประเมินกลับ HR แล้ว</div>
+                    : <button onClick={() => setShowForm(true)} className="bg-violet-600 hover:bg-violet-700 text-white px-6 py-3 rounded-xl font-medium text-sm ibtn">📝 เปิดฟอร์มประเมิน</button>}
+                </div>
+                {showForm && (
+                  <ScorecardForm initial={c.generatedDocs?.[4]?.data} candidate={c} user={{ name: myName }}
+                    onClose={() => setShowForm(false)} onSave={(data) => saveScorecard(active, data)} />
+                )}
+              </>
+            )}
+
+            {/* ===== EVAL: PROBATION ===== */}
+            {active.kind === 'eval-probation' && (
+              <>
+                <div className="bg-white border border-slate-200 rounded-2xl p-5 mb-4 text-center">
+                  <div className="text-5xl mb-3">📋</div>
+                  <div className="text-sm font-semibold text-slate-900 mb-1">ประเมินทดลองงาน 120 วัน</div>
+                  <div className="text-xs text-slate-500 mb-4">กรอกคะแนน 3 รอบ (Day 30/60/90) + สรุปสถานะ Day 119</div>
+                  {active.state === 'done'
+                    ? <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 text-emerald-900">✓ ส่งผลประเมินกลับ HR แล้ว</div>
+                    : <button onClick={() => setShowForm(true)} className="bg-violet-600 hover:bg-violet-700 text-white px-6 py-3 rounded-xl font-medium text-sm ibtn">📋 เปิดฟอร์มประเมิน</button>}
+                </div>
+                {showForm && (
+                  <ProbationEvalForm initial={active.docData} candidate={c} user={{ name: myName }}
+                    onClose={() => setShowForm(false)} onSave={(data) => saveProbation(active, data)} />
+                )}
+              </>
+            )}
+
+            {/* ===== VIEW: SHORTLIST ===== */}
+            {active.kind === 'view-shortlist' && (
+              <div className="bg-white border border-slate-200 rounded-2xl p-5 mb-4">
+                <div className="text-xs font-semibold text-slate-600 mb-3">👥 ผู้สมัครใน Shortlist · กดผล "ผ่าน/ไม่ผ่าน" รายคน</div>
+                {(c.shortlist || []).length === 0 && <div className="text-sm text-slate-400">ยังไม่มีรายชื่อใน shortlist</div>}
+                {(c.shortlist || []).map((s, i) => {
+                  const key = s.id || s.name || String(i);
+                  const v = verdicts[key];
+                  const locked = active.state === 'done';
                   return (
-                    <li key={i} className={`flex items-center gap-3 p-2.5 rounded-lg border ${tone} ${isMe ? 'ring-2 ring-sky-400' : ''}`}>
-                      <span className="w-6 h-6 rounded-full bg-white grid place-items-center text-xs font-bold">{i+1}</span>
-                      <div className="flex-1 text-sm">
-                        <div className="font-medium">{p.name} {isMe && <span className="text-xs text-sky-700">(คุณ)</span>}</div>
-                        <div className="text-xs">{p.role}</div>
-                      </div>
-                      <div className="text-xs">
-                        {p.status === 'approved' && `✓ เซ็นแล้ว ${fmtDateTime(p.signedAt)}`}
-                        {p.status === 'pending' && 'รอลงนาม'}
-                        {p.status === 'waiting' && 'รอคิว'}
-                      </div>
-                    </li>
+                    <div key={key} className="bg-slate-50 border border-slate-200 rounded-lg p-3 mb-2 flex items-center justify-between gap-2 flex-wrap">
+                      <span className="text-sm flex-1 min-w-0 truncate">📄 {s.name || `ผู้สมัคร ${i + 1}`}</span>
+                      {locked
+                        ? <span className="text-xs text-slate-500">{(active.entry.verdicts || {})[key] === 'pass' ? '✓ ผ่าน' : (active.entry.verdicts || {})[key] === 'reject' ? '✕ ไม่ผ่าน' : '—'}</span>
+                        : (
+                          <div className="flex items-center gap-2">
+                            <button onClick={() => setVerdicts(p => ({ ...p, [key]: 'pass' }))} className={`text-xs px-3 py-1 rounded-lg ibtn ${v === 'pass' ? 'bg-emerald-600 text-white' : 'border border-emerald-300 text-emerald-700'}`}>✓ ผ่าน</button>
+                            <button onClick={() => setVerdicts(p => ({ ...p, [key]: 'reject' }))} className={`text-xs px-3 py-1 rounded-lg ibtn ${v === 'reject' ? 'bg-rose-600 text-white' : 'border border-rose-300 text-rose-700'}`}>✕ ไม่ผ่าน</button>
+                          </div>
+                        )}
+                    </div>
                   );
                 })}
-              </ol>
-            </div>
+                {active.state !== 'done' && (c.shortlist || []).length > 0 && (
+                  <button onClick={() => saveShortlistVerdict(active)} disabled={Object.keys(verdicts).length === 0}
+                    className={`w-full mt-2 py-2.5 rounded-xl text-white font-medium text-sm ibtn ${Object.keys(verdicts).length ? 'bg-sky-600 hover:bg-sky-700' : 'bg-slate-300 cursor-not-allowed'}`}>
+                    ส่งผลพิจารณากลับ HR
+                  </button>
+                )}
+              </div>
+            )}
 
-            {/* Signature pad */}
-            <div className="bg-white border border-slate-200 rounded-2xl p-5 mb-4">
-              <div className="text-xs font-semibold text-slate-600 mb-2">✍️ ลายเซ็น</div>
-              <SignaturePad onChange={setSignature} />
-            </div>
-
-            {/* Action buttons */}
-            <div className="flex flex-col sm:flex-row gap-2 mb-4">
-              <button onClick={() => { if (signature) { showToast('บันทึกลายเซ็น + ส่งต่อ approver ลำดับถัดไปแล้ว', 'success'); setSigned(true); } else { showToast('กรุณาวาดลายเซ็นก่อน', 'warning'); } }}
-                className={`flex-1 py-3 rounded-xl text-white font-medium text-sm ibtn ${signature ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-emerald-300 cursor-not-allowed'}`}>
-                ✓ ลงนามและอนุมัติ
-              </button>
-              <button onClick={() => setRejectMode(true)} className="flex-1 py-3 rounded-xl border-2 border-rose-300 text-rose-700 hover:bg-rose-50 font-medium text-sm ibtn">
-                ✕ ปฏิเสธพร้อมเหตุผล
-              </button>
-            </div>
-
-            <div className="bg-sky-50 border border-sky-200 rounded-xl p-3 text-xs text-sky-800">
-              🔐 <b>ความปลอดภัยในระบบ</b> · เข้าระบบด้วยบัญชีพนักงาน · ทุก action บันทึก IP + เวลา ลง audit log สำหรับ IPO compliance
-            </div>
+            {/* ===== GENERIC ACK ===== */}
+            {active.kind === 'ack' && (
+              <div className="bg-white border border-slate-200 rounded-2xl p-5 mb-4 text-center">
+                <div className="text-sm text-slate-700 mb-3">คุณได้รับมอบหมายงานนี้ (Step {active.step})</div>
+                {active.state === 'done'
+                  ? <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 text-emerald-900">✓ รับทราบแล้ว</div>
+                  : <button onClick={() => markAckDone(active)} className="bg-sky-600 hover:bg-sky-700 text-white px-6 py-2.5 rounded-xl font-medium text-sm ibtn">รับทราบ</button>}
+              </div>
+            )}
           </div>
         </div>
+      );
+    }
+
+    function TaskCard({ t, onOpen }) {
+      const badge = TASK_STATE_BADGE[t.state];
+      const icon = t.kind === 'sign' ? '✍️' : t.kind === 'view-shortlist' ? '👥' : t.kind.startsWith('eval') ? '📝' : '📌';
+      return (
+        <button onClick={onOpen} className="w-full text-left bg-white border border-slate-200 hover:border-sky-300 rounded-xl p-4 ibtn flex items-center gap-3">
+          <span className="text-2xl">{icon}</span>
+          <div className="flex-1 min-w-0">
+            <div className="text-sm font-medium text-slate-900 truncate">{t.title}</div>
+            <div className="text-xs text-slate-500 truncate">{t.subject}</div>
+          </div>
+          <span className={`text-[10px] px-2 py-0.5 rounded-full border whitespace-nowrap ${badge.cls}`}>{badge.txt}</span>
+        </button>
       );
     }
 
@@ -5045,43 +4908,16 @@ ${HR_EMAIL}`;
     }
 
     // =========================================================================
-    // ===================== ROLE SWITCHER MODAL ===============================
-    // =========================================================================
-    function RoleSwitcher({ onPick, currentRole }) {
-      const roles = [
-        { id:'hr',         label:'HR Dashboard',       icon:'💼', desc:'มุมมองหลักของทีม HR · จัดการ candidate · upload · approval setup' },
-        { id:'approver',   label:'งานของฉัน (ผู้อนุมัติ/ผู้ประเมิน)', icon:'✍️', desc:'รวมงานทุก step · อนุมัติ+ลงนาม (e-sign) · ประเมินเช็คลิสต์+คอมเมนต์ · ดูเอกสารสำเร็จหลังทำเสร็จ' }
-      ];
-      return (
-        <Modal title="🎭 เลือก Role / View" subtitle="Preview ทุกมุมมองของระบบในที่เดียว" onClose={() => onPick(currentRole)} wide>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            {roles.map(r => (
-              <button key={r.id} onClick={() => onPick(r.id)}
-                className={`text-left p-4 rounded-xl border-2 transition ibtn ${currentRole === r.id ? 'border-sky-500 bg-sky-50' : 'border-slate-200 hover:border-slate-300 bg-white'}`}>
-                <div className="text-2xl mb-2">{r.icon}</div>
-                <div className="font-semibold text-slate-900 text-sm mb-1">{r.label}</div>
-                <div className="text-xs text-slate-500">{r.desc}</div>
-                {currentRole === r.id && <div className="mt-2 text-[11px] text-sky-700 font-medium">● กำลังดูอยู่</div>}
-              </button>
-            ))}
-          </div>
-          <div className="mt-4 bg-slate-900 text-white rounded-lg p-3 text-xs">
-            ✍️ มุมมอง "งานของฉัน" สำหรับผู้อนุมัติ/ผู้ประเมิน · ใช้พรีวิว flow การลงนาม/ประเมินจากฝั่ง HR
-          </div>
-        </Modal>
-      );
-    }
-
-    // =========================================================================
     // ===================== ROOT APP ==========================================
     // =========================================================================
     function App() {
       const [session, setSession] = useState(undefined);   // undefined = loading, null = logged out
       const [candidates, setCandidates] = useState([]);
-      const [role, setRole] = useState('hr');               // 'hr' | 'approver'
-      const [showRoles, setShowRoles] = useState(false);
-      const openRoles = () => setShowRoles(true);
-      const pickRole = (r) => { setRole(r); setShowRoles(false); };
+      // View is decided purely by the Supabase session role — no manual role
+      // switcher in production. admin (HR) -> HR Dashboard · user (ผู้อนุมัติ/
+      // ผู้ประเมิน) -> "งานของฉัน" (ApproverView).
+      const isAdmin = !!session && roleFromSession(session) === 'admin';
+      const viewRole = isAdmin ? 'hr' : 'approver';
 
       // --- Auth gate ---
       useEffect(() => {
@@ -5112,6 +4948,15 @@ ${HR_EMAIL}`;
         setCandidates([]);
       }
 
+      // Shared optimistic patch → persists to DB (used by "งานของฉัน" write-back)
+      function patchCandidate(id, fn) {
+        const cur = candidates.find(c => c.id === id);
+        if (!cur) return;
+        const next = fn(cur);
+        setCandidates(prev => prev.map(c => c.id === id ? next : c));
+        updateCandidate(id, toRow(next)).catch(err => showToast('บันทึกไม่สำเร็จ: ' + (err?.message || ''), 'warning'));
+      }
+
       if (session === undefined) {
         return <div className="min-h-screen grid place-items-center text-slate-400 text-sm">กำลังโหลด…</div>;
       }
@@ -5122,9 +4967,8 @@ ${HR_EMAIL}`;
       return (
         <>
           <ToastContainer />
-          {role === 'hr'        && <HRDashboard user={user} candidates={candidates} setCandidates={setCandidates} onRoleSwitch={openRoles} />}
-          {role === 'approver'  && <ApproverView onRoleSwitch={openRoles} />}
-          {showRoles && <RoleSwitcher currentRole={role} onPick={pickRole} />}
+          {viewRole === 'hr'       && <HRDashboard user={user} candidates={candidates} setCandidates={setCandidates} />}
+          {viewRole === 'approver' && <ApproverView candidates={candidates} myEmail={user.email} myName={user.name} patchCandidate={patchCandidate} />}
           <button onClick={handleSignOut} title="ออกจากระบบ"
             style={{ position:'fixed', left:12, bottom:12, zIndex:80 }}
             className="bg-white border border-slate-200 hover:border-slate-300 text-slate-600 text-xs font-medium px-3 py-2 rounded-lg shadow ibtn">
