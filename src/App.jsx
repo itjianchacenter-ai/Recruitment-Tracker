@@ -4463,7 +4463,8 @@ ${HR_EMAIL}`;
                     <>
                       <div className="bg-white border border-slate-200 rounded-2xl p-5 mb-4">
                         <div className="text-xs font-semibold text-slate-600 mb-2">💬 ข้อเสนอแนะเพิ่มเติม <span className="font-normal text-slate-400">(ไม่บังคับ · จะแสดงในส่วนที่ 4 ของเอกสาร)</span></div>
-                        <textarea rows={2} value={signComment} onChange={e => setSignComment(e.target.value)} className="input" placeholder="พิมพ์ความเห็น/ข้อเสนอแนะ (ถ้ามี)..." />
+                        <textarea rows={2} maxLength={200} value={signComment} onChange={e => setSignComment(e.target.value.slice(0, 200))} className="input" placeholder="พิมพ์ความเห็น/ข้อเสนอแนะ (ถ้ามี)..." />
+                        <div className={`text-[10px] text-right mt-1 ${signComment.length >= 200 ? 'text-amber-600' : 'text-slate-400'}`}>{signComment.length}/200 ตัวอักษร · กระชับเพื่อให้เอกสารพอดี 1 หน้า</div>
                       </div>
                       <div className="bg-white border border-slate-200 rounded-2xl p-5 mb-4">
                         <div className="text-xs font-semibold text-slate-600 mb-2">✍️ ลายเซ็น</div>
