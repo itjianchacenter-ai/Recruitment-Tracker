@@ -4185,31 +4185,35 @@ ${HR_EMAIL}`;
             title: `เซ็นอนุมัติ · ${DOC_LABELS[k]?.thai || 'เอกสาร'}`, subject: label,
           });
         }
-        // 2) ASSIGNED — distributions (view shortlist / scorecard fill / generic)
+        // 2) SHORTLIST review (Step 3) — assignment is stored in shortlist[].sentTo[]
+        //    (ShortlistCandidateCards writes here, NOT distributions[3])
+        const sl = c.shortlist || [];
+        const myShortlist = sl.filter(it => (it.sentTo || []).some(s => normalizeEmail(s.email) === me));
+        if (myShortlist.length) {
+          const allDone = myShortlist.every(it => it.verdict);
+          out.push({
+            kind: 'view-shortlist', id: `${c.id}|shortlist`, candidateId: c.id, candidate: c,
+            step: 3, mineItems: myShortlist, state: allDone ? 'done' : 'todo',
+            title: 'พิจารณา Shortlist ผู้สมัคร', subject: label,
+          });
+        }
+        // 3) ASSIGNED via distributions — Step 4 scorecard · Step 6 probation · generic
         const dists = c.distributions || {};
         for (const k of Object.keys(dists)) {
+          const step = Number(k);
           for (const e of (dists[k] || [])) {
             if (normalizeEmail(e.email) !== me) continue;
-            const step = Number(k);
-            const kind = step === 3 ? 'view-shortlist' : step === 4 ? 'eval-scorecard' : 'ack';
+            const kind = step === 4 ? 'eval-scorecard' : step === 6 ? 'eval-probation' : 'ack';
             out.push({
               kind, id: `${c.id}|dist|${k}|${e.id}`, candidateId: c.id, candidate: c,
-              step, entry: e, state: e.done ? 'done' : 'todo',
-              title: kind === 'view-shortlist' ? 'พิจารณา Shortlist ผู้สมัคร'
-                : kind === 'eval-scorecard' ? 'ประเมินสัมภาษณ์ (Scorecard)'
+              step, entry: e, docData: c.generatedDocs?.[step]?.data,
+              state: e.done ? 'done' : 'todo',
+              title: kind === 'eval-scorecard' ? 'ประเมินสัมภาษณ์ (Scorecard)'
+                : kind === 'eval-probation' ? 'ประเมินทดลองงาน (Day 30/60/90)'
                 : 'งานที่ได้รับมอบหมาย',
               subject: label,
             });
           }
-        }
-        // 3) PROBATION evaluation — generated_docs[6].data.evaluator_email
-        const pd = c.generatedDocs?.[6];
-        if (pd?.data?.evaluator_email && normalizeEmail(pd.data.evaluator_email) === me) {
-          out.push({
-            kind: 'eval-probation', id: `${c.id}|prob|6`, candidateId: c.id, candidate: c,
-            step: 6, docData: pd.data, state: pd.data.__submitted ? 'done' : 'todo',
-            title: 'ประเมินทดลองงาน (Day 30/60/90)', subject: label,
-          });
         }
       }
       const rank = { todo: 0, waiting: 1, rejected: 2, done: 3 };
@@ -4298,7 +4302,9 @@ ${HR_EMAIL}`;
         patchCandidate(task.candidateId, x => {
           const gd = { ...(x.generatedDocs || {}) };
           gd[6] = { ...(gd[6] || {}), data: { ...data, __submitted: true }, updatedAt: new Date().toISOString() };
-          return { ...x, generatedDocs: gd };
+          const dists = { ...(x.distributions || {}) };
+          if (task.entry) dists[6] = (dists[6] || []).map(e => e.id === task.entry.id ? { ...e, done: true, completedAt: new Date().toISOString() } : e);
+          return { ...x, generatedDocs: gd, distributions: dists };
         });
         showToast('✓ ส่งผลประเมินทดลองงานกลับ HR แล้ว', 'success');
         backToList();
@@ -4306,9 +4312,13 @@ ${HR_EMAIL}`;
 
       function saveShortlistVerdict(task) {
         patchCandidate(task.candidateId, x => {
-          const dists = { ...(x.distributions || {}) };
-          dists[3] = (dists[3] || []).map(e => e.id === task.entry.id ? { ...e, verdicts, done: true, completedAt: new Date().toISOString() } : e);
-          return { ...x, distributions: dists };
+          const sl = (x.shortlist || []).map(it => {
+            const key = it.id || it.name;
+            return key && verdicts[key]
+              ? { ...it, verdict: verdicts[key], verdictAt: new Date().toISOString(), verdictBy: myName }
+              : it;
+          });
+          return { ...x, shortlist: sl };
         });
         showToast('✓ ส่งผลพิจารณากลับ HR แล้ว', 'success');
         backToList();
@@ -4512,16 +4522,16 @@ ${HR_EMAIL}`;
             {active.kind === 'view-shortlist' && (
               <div className="bg-white border border-slate-200 rounded-2xl p-5 mb-4">
                 <div className="text-xs font-semibold text-slate-600 mb-3">👥 ผู้สมัครใน Shortlist · กดผล "ผ่าน/ไม่ผ่าน" รายคน</div>
-                {(c.shortlist || []).length === 0 && <div className="text-sm text-slate-400">ยังไม่มีรายชื่อใน shortlist</div>}
-                {(c.shortlist || []).map((s, i) => {
+                {(active.mineItems || []).length === 0 && <div className="text-sm text-slate-400">ยังไม่มีรายชื่อใน shortlist</div>}
+                {(active.mineItems || []).map((s, i) => {
                   const key = s.id || s.name || String(i);
                   const v = verdicts[key];
-                  const locked = active.state === 'done';
+                  const locked = active.state === 'done' || !!s.verdict;
                   return (
                     <div key={key} className="bg-slate-50 border border-slate-200 rounded-lg p-3 mb-2 flex items-center justify-between gap-2 flex-wrap">
                       <span className="text-sm flex-1 min-w-0 truncate">📄 {s.name || `ผู้สมัคร ${i + 1}`}</span>
                       {locked
-                        ? <span className="text-xs text-slate-500">{(active.entry.verdicts || {})[key] === 'pass' ? '✓ ผ่าน' : (active.entry.verdicts || {})[key] === 'reject' ? '✕ ไม่ผ่าน' : '—'}</span>
+                        ? <span className="text-xs text-slate-500">{s.verdict === 'pass' ? '✓ ผ่าน' : s.verdict === 'reject' ? '✕ ไม่ผ่าน' : '—'}</span>
                         : (
                           <div className="flex items-center gap-2">
                             <button onClick={() => setVerdicts(p => ({ ...p, [key]: 'pass' }))} className={`text-xs px-3 py-1 rounded-lg ibtn ${v === 'pass' ? 'bg-emerald-600 text-white' : 'border border-emerald-300 text-emerald-700'}`}>✓ ผ่าน</button>
@@ -4531,7 +4541,7 @@ ${HR_EMAIL}`;
                     </div>
                   );
                 })}
-                {active.state !== 'done' && (c.shortlist || []).length > 0 && (
+                {active.state !== 'done' && (active.mineItems || []).length > 0 && (
                   <button onClick={() => saveShortlistVerdict(active)} disabled={Object.keys(verdicts).length === 0}
                     className={`w-full mt-2 py-2.5 rounded-xl text-white font-medium text-sm ibtn ${Object.keys(verdicts).length ? 'bg-sky-600 hover:bg-sky-700' : 'bg-slate-300 cursor-not-allowed'}`}>
                     ส่งผลพิจารณากลับ HR
