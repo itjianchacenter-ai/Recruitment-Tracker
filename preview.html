@@ -34,7 +34,6 @@
       /* keep background colors (green section bars / checkbox fills) when printing */
       .print-document, .print-document * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
       /* keep tables / rows / signature cells from splitting across pages */
-      .print-document .form-table,
       .print-document .form-table tr,
       .print-document .form-table td,
       .print-document .check-grid,
@@ -68,8 +67,8 @@
     .print-document .checkbox { display: inline-block; width: 11px; height: 11px; border: 1px solid #475569; vertical-align: middle; margin-right: 4px; }
     .print-document .checkbox.checked { background: #3D4F2D; position: relative; }
     .print-document .checkbox.checked::after { content: '✓'; color: white; font-size: 9px; position: absolute; top: -3px; left: 1px; }
-    .print-document .sig-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0; margin-top: 10px; border-top: 1px solid #94a3b8; border-left: 1px solid #94a3b8; }
-    .print-document .sig-box { padding: 10px; border-right: 1px solid #94a3b8; border-bottom: 1px solid #94a3b8; min-height: 110px; display: flex; flex-direction: column; }
+    .print-document .sig-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0; margin-top: 10px; border: 1px solid #94a3b8; }
+    .print-document .sig-box { padding: 10px; border-right: 1px solid #94a3b8; min-height: 110px; display: flex; flex-direction: column; }
     .print-document .sig-label { font-size: 11px; font-weight: 600; text-align: center; margin-bottom: 4px; }
     .print-document .sig-label-en { font-size: 9px; color: #64748b; text-align: center; margin-bottom: 24px; }
     .print-document .sig-line { border-top: 1px solid #475569; padding-top: 4px; text-align: center; font-size: 10px; color: #64748b; margin-top: auto; }

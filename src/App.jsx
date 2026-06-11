@@ -5,7 +5,7 @@ import {
   subscribeCandidates, signIn, signOut, getSession, onAuthChange,
   actorFromSession, roleFromSession, usernameToEmail,
   adminListUsers, adminCreateUser, adminResetPassword, adminDeleteUser,
-  findUnregisteredEmails, getClientIp
+  findUnregisteredEmails, getClientIp, uploadFile, getSignedUrl
 } from './lib/supabase.js';
 
 // ---------------------------------------------------------------------------
@@ -35,7 +35,13 @@ async function ensureAssigneesRegistered(emails, showToast) {
 // for generatedDocs / approvalWorkflows). Everything else shares names.
 // ---------------------------------------------------------------------------
 function fromRow(r) {
-  return { ...r, generatedDocs: r.generated_docs ?? {}, approvalWorkflows: r.approval_workflows ?? {} };
+  return {
+    ...r,
+    generatedDocs: r.generated_docs ?? {},
+    approvalWorkflows: r.approval_workflows ?? {},
+    // per-round probation evals live inside the existing probation jsonb (no DB migration)
+    probationEvals: r.probation?.evals ?? {},
+  };
 }
 function toRow(c) {
   return {
@@ -48,7 +54,7 @@ function toRow(c) {
     status: c.status,
     steps: c.steps ?? [],
     documents: c.documents ?? [],
-    probation: c.probation ?? {},
+    probation: { ...(c.probation ?? {}), evals: c.probationEvals ?? c.probation?.evals ?? {} },
     shortlist: c.shortlist ?? [],
     generated_docs: c.generatedDocs ?? c.generated_docs ?? {},
     approval_workflows: c.approvalWorkflows ?? c.approval_workflows ?? {},
@@ -977,14 +983,23 @@ function toRow(c) {
       const fileInputRef = useRef(null);
       const [recipient, setRecipient] = useState({ name:'', email:'' });
       const [showPreview, setShowPreview] = useState(false);
+      const [uploadingFile, setUploadingFile] = useState(false);
 
-      const handleFileUpload = (e) => {
+      const handleFileUpload = async (e) => {
         const f = e.target.files?.[0];
-        if (!f) return;
-        const size = f.size < 1024 ? `${f.size} B` : f.size < 1048576 ? `${(f.size/1024).toFixed(0)} KB` : `${(f.size/1048576).toFixed(1)} MB`;
-        onChange({ files: [...item.files, { name: f.name, size, uploadedAt: today(), uploadedBy: '(คุณ)' }] });
         e.target.value = '';
-        showToast(`📎 อัพโหลด ${f.name}`, 'success');
+        if (!f) return;
+        setUploadingFile(true);
+        try {
+          const meta = await uploadFile(candidate.id, 3, f);   // real upload -> {path,name,size}
+          const size = f.size < 1024 ? `${f.size} B` : f.size < 1048576 ? `${(f.size/1024).toFixed(0)} KB` : `${(f.size/1048576).toFixed(1)} MB`;
+          onChange({ files: [...item.files, { name: meta.name, path: meta.path, size, uploadedAt: today(), uploadedBy: '(คุณ)' }] });
+          showToast(`📎 อัพโหลด ${f.name}`, 'success');
+        } catch (err) {
+          showToast('อัปโหลดไม่สำเร็จ: ' + (err?.message || ''), 'warning');
+        } finally {
+          setUploadingFile(false);
+        }
       };
       const removeFile = (idx) => {
         onChange({ files: item.files.filter((_, i) => i !== idx) });
@@ -1043,7 +1058,7 @@ ${HR_EMAIL}`;
           <div className="bg-slate-50 border border-slate-200 rounded-lg p-2.5">
             <div className="flex items-center justify-between mb-2">
               <span className="text-[11px] text-slate-700 font-medium">📎 Resume / เอกสาร candidate · {item.files.length} ไฟล์</span>
-              <button onClick={() => fileInputRef.current?.click()} className="text-xs bg-slate-900 hover:bg-slate-800 text-white px-2.5 py-1 rounded ibtn">+ Upload</button>
+              <button onClick={() => fileInputRef.current?.click()} disabled={uploadingFile} className="text-xs bg-slate-900 hover:bg-slate-800 disabled:opacity-60 text-white px-2.5 py-1 rounded ibtn">{uploadingFile ? 'กำลังอัปโหลด…' : '+ Upload'}</button>
               <input ref={fileInputRef} type="file" hidden onChange={handleFileUpload} />
             </div>
             {item.files.length > 0 && (
@@ -1526,28 +1541,43 @@ ${HR_EMAIL}`;
     }
 
     // ===== Step 5: เอกสารแนบประกอบการพิจารณาอนุมัติ (อยู่ที่หน้า step · ไม่ใช่ในฟอร์ม) =====
-    function ApprovalAttachments({ candidate, onUpdate }) {
+    function ApprovalAttachments({ candidate, step = 5, onUpdate }) {
       const files = candidate.approvalAttachments || [];
       const ref = useRef(null);
-      const add = (e) => {
-        const names = Array.from(e.target.files || []).map(f => f.name);
-        if (names.length) onUpdate([...files, ...names]);
+      const [busy, setBusy] = useState(false);
+      const add = async (e) => {
+        const picked = Array.from(e.target.files || []);
         e.target.value = '';
+        if (!picked.length) return;
+        setBusy(true);
+        try {
+          const uploaded = [];
+          for (const f of picked) {
+            const meta = await uploadFile(candidate.id, step, f);  // real upload -> {path,name,size,...}
+            uploaded.push({ name: meta.name, path: meta.path, size: meta.size });
+          }
+          onUpdate([...files, ...uploaded]);
+          showToast(`แนบเอกสาร ${uploaded.length} ไฟล์เรียบร้อย`, 'success');
+        } catch (err) {
+          showToast('อัปโหลดไม่สำเร็จ: ' + (err?.message || ''), 'warning');
+        } finally {
+          setBusy(false);
+        }
       };
       const remove = (i) => onUpdate(files.filter((_, j) => j !== i));
       return (
         <div className="mt-2 bg-amber-50/60 border border-dashed border-amber-300 rounded-lg p-2.5 space-y-1.5">
           <div className="flex items-center justify-between gap-2">
             <div className="text-[11px] font-semibold text-amber-900">📎 เอกสารแนบประกอบการพิจารณาอนุมัติ ({files.length})</div>
-            <button onClick={() => ref.current?.click()} className="text-xs bg-amber-600 hover:bg-amber-700 text-white px-2.5 py-1 rounded ibtn whitespace-nowrap">+ แนบเอกสาร</button>
+            <button onClick={() => ref.current?.click()} disabled={busy} className="text-xs bg-amber-600 hover:bg-amber-700 disabled:opacity-60 text-white px-2.5 py-1 rounded ibtn whitespace-nowrap">{busy ? 'กำลังอัปโหลด…' : '+ แนบเอกสาร'}</button>
             <input ref={ref} type="file" multiple hidden onChange={add} />
           </div>
-          <div className="text-[10px] text-amber-700">เช่น resume · scorecard สัมภาษณ์ · ประวัติเงินเดือน · ผลตรวจอ้างอิง — ผู้อนุมัติจะเห็นไฟล์เหล่านี้ใน "งานของฉัน" + ในเอกสาร</div>
+          <div className="text-[10px] text-amber-700">เช่น resume · scorecard สัมภาษณ์ · ประวัติเงินเดือน · ผลตรวจอ้างอิง — ผู้อนุมัติเปิดดูไฟล์เหล่านี้ได้ใน "งานของฉัน"</div>
           {files.length > 0 && (
             <ul className="space-y-1">
-              {files.map((name, i) => (
+              {files.map((f, i) => (
                 <li key={i} className="text-xs bg-white border border-amber-200 rounded px-2 py-1 flex items-center justify-between">
-                  <span className="truncate">📄 {name}</span>
+                  <span className="truncate">📄 {f.name || f}</span>
                   <button onClick={() => remove(i)} className="text-rose-400 hover:text-rose-600 whitespace-nowrap">×</button>
                 </li>
               ))}
@@ -2229,14 +2259,12 @@ ${HR_EMAIL}`;
           </table>
 
           {/* Evaluator digital signature (captured when filling in "งานของฉัน") */}
-          <div className="sig-grid" style={{ gridTemplateColumns:'1fr', marginTop:'14px' }}>
-            <div className="sig-box" style={{ minHeight:'90px' }}>
-              <div className="sig-label">ผู้ประเมิน / ผู้สัมภาษณ์</div>
-              <div className="sig-label-en">Evaluator</div>
-              {data.signature_data
-                ? <DigitalSignatureMark approver={{ name: data.interviewer_name, role: data.interviewer_position, signedAt: data.signedAt || today(), ip: data.signature_ip || '-', signature_data: data.signature_data }} />
-                : <div className="sig-line">ลงชื่อ ...........................................<br />({data.interviewer_name || '..............................'})</div>}
-            </div>
+          <div style={{ marginTop:'14px', border:'1px solid #94a3b8', padding:'10px', minHeight:'90px', display:'flex', flexDirection:'column', breakInside:'avoid', pageBreakInside:'avoid' }}>
+            <div className="sig-label">ผู้ประเมิน / ผู้สัมภาษณ์</div>
+            <div className="sig-label-en">Evaluator</div>
+            {data.signature_data
+              ? <DigitalSignatureMark approver={{ name: data.interviewer_name, role: data.interviewer_position, signedAt: data.signedAt || today(), ip: data.signature_ip || '-', signature_data: data.signature_data }} />
+              : <div className="sig-line">ลงชื่อ ...........................................<br />({data.interviewer_name || '..............................'})</div>}
           </div>
           </div>{/* /sc-page2 */}
 
@@ -2275,11 +2303,26 @@ ${HR_EMAIL}`;
         { name:'', email:'', role:'CEO' }
       ]);
       const apprFileRef = useRef(null);
+      const [uploadingAtt, setUploadingAtt] = useState(false);
       const set = (k, v) => setForm(f => ({ ...f, [k]:v }));
-      const addAttachments = (e) => {
-        const names = Array.from(e.target.files || []).map(f => f.name);
-        if (names.length) set('attachments', [...(form.attachments || []), ...names]);
+      const addAttachments = async (e) => {
+        const picked = Array.from(e.target.files || []);
         e.target.value = '';
+        if (!picked.length) return;
+        setUploadingAtt(true);
+        try {
+          const uploaded = [];
+          for (const f of picked) {
+            const meta = await uploadFile(candidate.id, 5, f);  // real upload -> {path,name,size}
+            uploaded.push({ name: meta.name, path: meta.path, size: meta.size });
+          }
+          set('attachments', [...(form.attachments || []), ...uploaded]);
+          showToast(`แนบเอกสาร ${uploaded.length} ไฟล์เรียบร้อย`, 'success');
+        } catch (err) {
+          showToast('อัปโหลดไม่สำเร็จ: ' + (err?.message || ''), 'warning');
+        } finally {
+          setUploadingAtt(false);
+        }
       };
       const removeAttachment = (i) => set('attachments', (form.attachments || []).filter((_, j) => j !== i));
       const toggleArr = (k, v) => setForm(f => ({ ...f, [k]: f[k].includes(v) ? f[k].filter(x => x !== v) : [...f[k], v] }));
@@ -2327,14 +2370,17 @@ ${HR_EMAIL}`;
                   <button type="button" onClick={() => set('allowance_items', [...(form.allowance_items||[]), { label:'', amount:'' }])}
                           className="text-xs px-2 py-1 rounded bg-emerald-600 hover:bg-emerald-700 text-white">+ เพิ่มรายการ</button>
                 </div>
+                {(form.allowance_items||[]).length > 10 && (
+                  <div className="text-[10px] text-amber-600 mb-1">⚠️ มี {(form.allowance_items||[]).length} รายการ · เอกสารจะต่อไปหน้า 2 อัตโนมัติ (แถวไม่ขาด เส้นครบ)</div>
+                )}
                 {(form.allowance_items||[]).length === 0 && (
                   <div className="text-xs text-slate-400 italic py-1">ยังไม่มีรายการ — กด "+ เพิ่มรายการ" เพื่อเพิ่ม เช่น ค่าตำแหน่ง · ค่าเดินทาง · ค่าโทรศัพท์</div>
                 )}
                 {(form.allowance_items||[]).map((it, i) => (
-                  <div key={i} className="flex items-center gap-2 mb-1">
-                    <input className="input flex-1 text-xs" placeholder="ชื่อรายการ เช่น ค่าเดินทาง" value={it.label}
+                  <div key={i} className="grid items-center gap-2 mb-1" style={{ gridTemplateColumns: '1fr 110px auto auto' }}>
+                    <input className="input text-xs" placeholder="ชื่อรายการ เช่น ค่าเดินทาง · ค่าอาหาร" value={it.label}
                            onChange={e => set('allowance_items', form.allowance_items.map((x,j) => j===i ? {...x, label:e.target.value} : x))} />
-                    <input type="number" className="input w-32 text-xs text-right" placeholder="จำนวนเงิน" value={it.amount}
+                    <input type="number" className="input text-xs text-right" placeholder="จำนวนเงิน" value={it.amount}
                            onChange={e => set('allowance_items', form.allowance_items.map((x,j) => j===i ? {...x, amount:e.target.value} : x))} />
                     <span className="text-xs text-slate-400">บาท</span>
                     <button type="button" onClick={() => set('allowance_items', form.allowance_items.filter((_,j) => j!==i))}
@@ -2406,15 +2452,15 @@ ${HR_EMAIL}`;
             <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 space-y-2">
               <div className="flex items-center justify-between gap-2">
                 <div className="text-xs font-semibold text-slate-700">📎 เอกสารแนบประกอบการพิจารณา (ส่งพร้อมเอกสารอนุมัติ)</div>
-                <button type="button" onClick={() => apprFileRef.current?.click()} className="text-xs bg-slate-900 hover:bg-slate-800 text-white px-2.5 py-1 rounded ibtn whitespace-nowrap">+ แนบเอกสาร</button>
+                <button type="button" onClick={() => apprFileRef.current?.click()} disabled={uploadingAtt} className="text-xs bg-slate-900 hover:bg-slate-800 disabled:opacity-60 text-white px-2.5 py-1 rounded ibtn whitespace-nowrap">{uploadingAtt ? 'กำลังอัปโหลด…' : '+ แนบเอกสาร'}</button>
                 <input ref={apprFileRef} type="file" multiple hidden onChange={addAttachments} />
               </div>
-              <div className="text-[10px] text-slate-500">เช่น resume · scorecard สัมภาษณ์ · ประวัติเงินเดือน · ผลตรวจอ้างอิง — รวมเป็นชุดเดียว ผู้อนุมัติเห็นครบตอนพิจารณาเซ็น</div>
+              <div className="text-[10px] text-slate-500">เช่น resume · scorecard สัมภาษณ์ · ประวัติเงินเดือน · ผลตรวจอ้างอิง — ผู้อนุมัติเปิดดูได้ตอนพิจารณาเซ็น</div>
               {(form.attachments || []).length > 0 ? (
                 <ul className="space-y-1">
-                  {form.attachments.map((name, i) => (
+                  {form.attachments.map((f, i) => (
                     <li key={i} className="text-xs bg-white border border-slate-200 rounded px-2 py-1 flex items-center justify-between">
-                      <span className="truncate">📄 {name}</span>
+                      <span className="truncate">📄 {f.name || f}</span>
                       <button type="button" onClick={() => removeAttachment(i)} className="text-rose-400 hover:text-rose-600 whitespace-nowrap">×</button>
                     </li>
                   ))}
@@ -2518,7 +2564,7 @@ ${HR_EMAIL}`;
             <>
               <div className="section-bar" style={{marginTop:'14px'}}>เอกสารแนบประกอบการพิจารณา</div>
               <div style={{ border:'1px solid #94a3b8', borderTop:'none', padding:'8px 12px', fontSize:'11px' }}>
-                {data.attachments.map((n, i) => <div key={i}>📎 {n}</div>)}
+                {data.attachments.map((n, i) => <div key={i}>📎 {n.name || n}</div>)}
               </div>
             </>
           )}
@@ -2714,7 +2760,11 @@ ${HR_EMAIL}`;
         onSave(form);
       };
 
-      const RoundSection = ({ round, label, dayNum }) => (
+      // NOTE: a plain render function (called as {renderRound(...)}), NOT a
+      // component (<RoundSection/>). Defining a component inside the parent
+      // remounts it every keystroke -> textareas lose focus (typed 1 char at a
+      // time). Inlining the JSX avoids that.
+      const renderRound = (round, label, dayNum) => (
         <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 space-y-2">
           <div className="flex items-center justify-between">
             <div className="text-xs font-semibold text-slate-700">{label} · Day {dayNum}</div>
@@ -2766,9 +2816,9 @@ ${HR_EMAIL}`;
               </div>
             </div>
 
-            <RoundSection round="day30" label="รอบที่ 1 · ประเมิน" dayNum={30} />
-            <RoundSection round="day60" label="รอบที่ 2 · ประเมิน" dayNum={60} />
-            <RoundSection round="day90" label="รอบที่ 3 · ประเมิน" dayNum={90} />
+            {renderRound('day30', 'รอบที่ 1 · ประเมิน', 30)}
+            {renderRound('day60', 'รอบที่ 2 · ประเมิน', 60)}
+            {renderRound('day90', 'รอบที่ 3 · ประเมิน', 90)}
 
             <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3 space-y-2">
               <div className="text-xs font-semibold text-emerald-900">สรุปผลทดลองงาน · Day 119 (ผ่านทดลองงาน)</div>
@@ -2912,6 +2962,269 @@ ${HR_EMAIL}`;
           <div style={{ fontSize:'9px', color:'#94a3b8', marginTop:'12px', textAlign:'center' }}>
             สร้างโดยระบบ Recruitment 120 Days · JIANCHA GROUP · {fmtDate(today())}
           </div>
+        </div>
+      );
+    }
+
+    // =====================================================================
+    // PER-ROUND probation (Phase 1) — one document per round (Day 30/60/90).
+    // Admin creates a round + assigns an evaluator; the evaluator fills it in
+    // "งานของฉัน": page 1 = score grid, page 2 = comment + signature.
+    // =====================================================================
+    const PROB_FINAL_OPTIONS = [
+      { v:'passed',   label:'ผ่านทดลองงาน · บรรจุพนักงานประจำ' },
+      { v:'extended', label:'ทดลองงานต่อ (ต่ออายุประเมิน)' },
+      { v:'failed',   label:'ไม่ผ่านทดลองงาน' },
+    ];
+
+    // Evaluator's single-round form (filled in "งานของฉัน")
+    function ProbationRoundForm({ roundKey, dayLabel, candidate, initial, user, onClose, onSave }) {
+      const allKeys = PROB_CRITERIA.flatMap(s => s.items.map(i => i.key));
+      const blank = Object.fromEntries(allKeys.map(k => [k, 0]));
+      const seed = initial ?? {};
+      const [scores, setScores] = useState(seed.scores ?? blank);
+      const [comment, setComment] = useState(seed.comment ?? '');
+      const [finalStatus, setFinalStatus] = useState(seed.final_status ?? '');
+      const [signature, setSignature] = useState(seed.evaluator_signature ?? null);
+      const isFinal = roundKey === 'day90';
+      const setScore = (k, v) => setScores(s => ({ ...s, [k]: v }));
+      const scoredCount = allKeys.filter(k => (scores[k] ?? 0) >= 1).length;
+      const allScored = scoredCount === allKeys.length;
+      const submit = (e) => {
+        e.preventDefault();
+        if (!allScored) { showToast(`กรุณาให้คะแนนให้ครบทุกข้อ (${allKeys.length} ข้อ)`, 'warning'); return; }
+        if (isFinal && !finalStatus) { showToast('กรุณาเลือกผลสรุปทดลองงาน (Day 90)', 'warning'); return; }
+        if (!signature) { showToast('กรุณาลงลายเซ็นก่อนส่ง', 'warning'); return; }
+        onSave({ scores, comment, evaluator_signature: signature, ...(isFinal ? { final_status: finalStatus } : {}) });
+      };
+      return (
+        <Modal title={`ประเมินทดลองงาน · Day ${dayLabel}`} subtitle={`${candidate.name || candidate.position} · ติ๊กคะแนน + คอมเมนต์ + ลงนาม`} onClose={onClose} wide>
+          <form onSubmit={submit} className="space-y-3">
+            {/* ล็อกข้อมูลพนักงาน (จาก HR · แก้ไม่ได้) */}
+            <div className="bg-slate-50 border border-slate-200 rounded-lg p-3">
+              <div className="text-xs font-semibold text-slate-700 flex items-center gap-1">ข้อมูลพนักงานที่ถูกประเมิน <span className="text-[10px] font-normal text-slate-400">🔒 ข้อมูลจาก HR · แก้ไขไม่ได้</span></div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs mt-1">
+                <div><div className="text-slate-500 mb-0.5">ชื่อ-นามสกุล</div><div className="font-medium text-slate-800 bg-white border border-slate-200 rounded px-2 py-1.5">{candidate.name || '—'}</div></div>
+                <div><div className="text-slate-500 mb-0.5">ตำแหน่ง</div><div className="font-medium text-slate-800 bg-white border border-slate-200 rounded px-2 py-1.5">{candidate.position || '—'}</div></div>
+                <div><div className="text-slate-500 mb-0.5">แผนก</div><div className="font-medium text-slate-800 bg-white border border-slate-200 rounded px-2 py-1.5">{candidate.department || '—'}</div></div>
+              </div>
+            </div>
+
+            {/* คะแนน */}
+            <div className="bg-white border border-slate-200 rounded-lg p-3">
+              <div className="flex items-center justify-between mb-2">
+                <div className="text-xs font-semibold text-slate-700">ให้คะแนน <span className="font-normal text-slate-400">(5=ยอดเยี่ยม · 1=น้อยมาก)</span></div>
+                <div className={`text-[11px] ${allScored ? 'text-emerald-600' : 'text-amber-600'}`}>{scoredCount}/{allKeys.length} ข้อ</div>
+              </div>
+              {PROB_CRITERIA.map(sec => (
+                <div key={sec.section} className="mb-2">
+                  <div className="text-[11px] font-semibold text-slate-600 bg-slate-100 px-2 py-1 rounded">{sec.section}</div>
+                  {sec.items.map(it => (
+                    <div key={it.key} className="flex items-center justify-between gap-2 py-1.5 border-b border-slate-100">
+                      <span className="text-xs flex-1 min-w-0">{it.label}</span>
+                      <div className="flex gap-1 shrink-0">
+                        {[5,4,3,2,1].map(n => (
+                          <button type="button" key={n} onClick={() => setScore(it.key, n)}
+                            className={`w-7 h-7 rounded text-xs font-semibold ibtn ${scores[it.key] === n ? 'bg-violet-600 text-white' : 'bg-white border border-slate-300 text-slate-500 hover:border-violet-400'}`}>{n}</button>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ))}
+            </div>
+
+            {/* คอมเมนต์ */}
+            <div>
+              <label className="text-xs font-medium text-slate-600">ความคิดเห็น / ข้อเสนอแนะรอบนี้</label>
+              <textarea rows={3} maxLength={350} className="input mt-1" value={comment} onChange={e => setComment(e.target.value.slice(0, 350))} placeholder="จุดแข็ง · จุดที่ต้องพัฒนา · ข้อเสนอแนะ" />
+              <div className={`text-[10px] text-right mt-0.5 ${comment.length >= 350 ? 'text-amber-600' : 'text-slate-400'}`}>{comment.length}/350</div>
+            </div>
+
+            {/* Day 90: ผลสรุป */}
+            {isFinal && (
+              <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
+                <div className="text-xs font-semibold text-amber-900 mb-2">สรุปผลทดลองงาน (Day 90) <span className="text-rose-500">*</span></div>
+                <div className="space-y-1">
+                  {PROB_FINAL_OPTIONS.map(o => (
+                    <label key={o.v} className="flex items-center gap-2 text-xs cursor-pointer">
+                      <input type="radio" name="final_status" checked={finalStatus === o.v} onChange={() => setFinalStatus(o.v)} />
+                      {o.label}
+                    </label>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* ลายเซ็น */}
+            <div className="bg-white border border-slate-200 rounded-lg p-3">
+              <div className="text-xs font-semibold text-slate-700 mb-2">✍️ ลายเซ็นผู้ประเมิน <span className="font-normal text-rose-500">*จำเป็น</span></div>
+              <SignaturePad onChange={setSignature} />
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2">
+              <button type="button" onClick={onClose} className="px-3 py-2 text-sm text-slate-600 hover:text-slate-900">ยกเลิก</button>
+              <button type="submit" className="px-4 py-2 text-sm bg-violet-600 hover:bg-violet-700 text-white rounded-lg ibtn">✓ ส่งผลประเมิน + ลงนาม</button>
+            </div>
+          </form>
+        </Modal>
+      );
+    }
+
+    // Single-round probation document — page 1 = scores, page 2 = comment + signatures
+    function ProbationRoundDoc({ data, candidate, round }) {
+      const dayLabel = data.dayLabel || (round === 'day60' ? '60' : round === 'day90' ? '90' : '30');
+      const scores = data.scores || {};
+      const allKeys = PROB_CRITERIA.flatMap(s => s.items.map(i => i.key));
+      const filled = allKeys.filter(k => (scores[k] ?? 0) >= 1);
+      const total = filled.reduce((s, k) => s + (scores[k] || 0), 0);
+      const statusLabel = { passed:'✓ ผ่านทดลองงาน · บรรจุพนักงานประจำ', extended:'⟲ ทดลองงานต่อ', failed:'✕ ไม่ผ่านทดลองงาน' }[data.final_status];
+      const statusColor = { passed:'#16a34a', extended:'#d97706', failed:'#dc2626' }[data.final_status];
+      return (
+        <div className="print-document">
+          <DocHeader step={6} candidate={candidate} />
+          <div style={{ background:'#475569', color:'#fff', padding:'8px 14px', borderRadius:'4px', marginBottom:'8px', fontWeight:700, fontSize:'13px' }}>
+            แบบประเมินผลทดลองงาน · รอบ Day {dayLabel}{round === 'day90' ? ' (รอบสุดท้าย)' : ''}
+          </div>
+
+          <div className="section-bar">ส่วนที่ 1 : ข้อมูลพนักงาน</div>
+          <table className="form-table">
+            <tbody>
+              <tr><td className="lbl" style={{width:'15%'}}>ชื่อ-นามสกุล</td><td className="val" style={{width:'35%'}}><b>{candidate.name || '—'}</b></td>
+                  <td className="lbl" style={{width:'15%'}}>ตำแหน่ง</td><td className="val" style={{width:'35%'}}>{candidate.position}</td></tr>
+              <tr><td className="lbl">แผนก</td><td className="val">{candidate.department}</td>
+                  <td className="lbl">ผู้ประเมิน</td><td className="val">{data.evaluator_name || data.evaluator_email || '—'}</td></tr>
+            </tbody>
+          </table>
+
+          <div className="section-bar" style={{marginTop:'12px'}}>ส่วนที่ 2 : ผลการประเมิน (5 = ยอดเยี่ยม → 1 = น้อยมาก)</div>
+          <table className="form-table">
+            <thead>
+              <tr style={{ background:'#e2e8f0' }}>
+                <td className="lbl" style={{width:'60%'}}>หัวข้อ</td>
+                {[5,4,3,2,1].map(n => <td key={n} className="lbl" style={{width:'8%', textAlign:'center'}}>{n}</td>)}
+              </tr>
+            </thead>
+            <tbody>
+              {PROB_CRITERIA.map(sec => (
+                <React.Fragment key={sec.section}>
+                  <tr><td colSpan="6" style={{ background:'#f1f5f9', padding:'4px 8px', fontWeight:600, fontSize:'11px' }}>{sec.section}</td></tr>
+                  {sec.items.map(it => (
+                    <tr key={it.key}>
+                      <td className="val" style={{ fontSize:'11px', paddingLeft:'14px' }}>• {it.label}</td>
+                      {[5,4,3,2,1].map(n => <td key={n} className="val" style={{ textAlign:'center' }}>{scores[it.key] === n ? '✓' : ''}</td>)}
+                    </tr>
+                  ))}
+                </React.Fragment>
+              ))}
+              {filled.length > 0 && (
+                <tr style={{ background:'#f1f5f9', fontWeight:600 }}>
+                  <td className="lbl" style={{ paddingLeft:'14px' }}>คะแนนรวม</td>
+                  <td colSpan="5" className="val" style={{ textAlign:'right', paddingRight:'10px' }}>{total} / {filled.length * 5} · เฉลี่ย {(total / filled.length).toFixed(1)} / 5</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+
+          {/* PAGE 2 */}
+          <div className="sc-page2">
+            <div className="section-bar" style={{marginTop:'12px'}}>ส่วนที่ 3 : ความคิดเห็น / ข้อเสนอแนะ</div>
+            <div style={{ border:'1px solid #94a3b8', borderTop:'none', minHeight:'70px', padding:'10px', whiteSpace:'pre-wrap', fontSize:'11px' }}>{data.comment || ''}</div>
+
+            {round === 'day90' && (
+              <>
+                <div className="section-bar" style={{marginTop:'12px'}}>ส่วนที่ 4 : สรุปผลทดลองงาน</div>
+                <table className="form-table"><tbody>
+                  <tr><td className="val">
+                    <Cb checked={data.final_status === 'passed'} label="ผ่านทดลองงาน · บรรจุพนักงานประจำ" /> &nbsp;&nbsp;
+                    <Cb checked={data.final_status === 'extended'} label="ทดลองงานต่อ" /> &nbsp;&nbsp;
+                    <Cb checked={data.final_status === 'failed'} label="ไม่ผ่านทดลองงาน" />
+                    {statusLabel && <div style={{ marginTop:'6px' }}><span style={{ display:'inline-block', padding:'4px 12px', borderRadius:4, background:`${statusColor}20`, color:statusColor, fontWeight:700, fontSize:'12px' }}>{statusLabel}</span></div>}
+                  </td></tr>
+                </tbody></table>
+              </>
+            )}
+
+            <div className="sig-grid" style={{ gridTemplateColumns:'1fr 1fr', marginTop:'14px' }}>
+              <div className="sig-box" style={{ minHeight:'90px' }}>
+                <div className="sig-label">ผู้ประเมิน</div>
+                <div className="sig-label-en">Evaluator</div>
+                {data.evaluator_signature
+                  ? <DigitalSignatureMark approver={{ name: data.evaluator_name, role: 'ผู้ประเมิน', signedAt: data.evaluator_signedAt || today(), ip: data.evaluator_ip || '-', signature_data: data.evaluator_signature }} />
+                  : <div className="sig-line">ลงชื่อ ...........................................</div>}
+              </div>
+              <div className="sig-box" style={{ minHeight:'90px' }}>
+                <div className="sig-label">พนักงาน (รับทราบผล)</div>
+                <div className="sig-label-en">Employee — acknowledged</div>
+                {data.ack_signature
+                  ? <DigitalSignatureMark approver={{ name: candidate.name, role: 'พนักงาน', signedAt: data.ack_signedAt || today(), ip: data.ack_ip || '-', signature_data: data.ack_signature }} />
+                  : <div className="sig-line">รอพนักงานลงนามรับทราบ</div>}
+              </div>
+            </div>
+          </div>
+
+          <div style={{ fontSize:'9px', color:'#94a3b8', marginTop:'12px', textAlign:'center' }}>
+            สร้างโดยระบบ Recruitment 120 Days · JIANCHA GROUP · {fmtDate(today())}
+          </div>
+        </div>
+      );
+    }
+
+    // Admin: one row per round (create + assign evaluator + status)
+    function ProbRoundRow({ candidate, roundKey, day, label, ev, daysInProbation, onCreate, onViewDoc }) {
+      const [name, setName] = useState('');
+      const [email, setEmail] = useState('');
+      const [busy, setBusy] = useState(false);
+      const reached = daysInProbation >= day;
+      const create = async () => {
+        if (!name.trim() || !email.trim()) { showToast('กรอกชื่อ + อีเมลผู้ประเมิน', 'warning'); return; }
+        setBusy(true);
+        const ok = await ensureAssigneesRegistered([email], showToast);
+        if (!ok) { setBusy(false); return; }
+        onCreate(roundKey, { dayLabel: String(day), createdAt: new Date().toISOString(), evaluator_name: name.trim(), evaluator_email: email.trim(), scores: {}, comment: '', evaluated: false });
+        setBusy(false);
+        showToast(`สร้างเอกสารประเมิน Day ${day} + มอบหมาย ${name} แล้ว · งานอยู่ใน "งานของฉัน" ของผู้ประเมิน`, 'email');
+      };
+      return (
+        <div className="border border-slate-200 rounded-lg p-3 bg-white">
+          <div className="flex items-center justify-between gap-2 mb-1">
+            <div className="text-xs font-semibold text-slate-800">📋 {label} · Day {day}</div>
+            {!reached && !ev && <span className="text-[10px] text-slate-400">ยังไม่ถึงรอบ (อีก {day - daysInProbation} วัน) · สร้างล่วงหน้าได้</span>}
+          </div>
+          {!ev ? (
+            <div className="grid items-center gap-2" style={{ gridTemplateColumns:'1fr 1fr auto' }}>
+              <input className="input text-xs" placeholder="ชื่อผู้ประเมิน" value={name} onChange={e => setName(e.target.value)} />
+              <input className="input text-xs" placeholder="อีเมล (= username)" value={email} onChange={e => setEmail(e.target.value)} />
+              <button type="button" onClick={create} disabled={busy} className="text-xs bg-violet-600 hover:bg-violet-700 disabled:opacity-60 text-white px-3 py-2 rounded ibtn whitespace-nowrap">{busy ? '...' : 'สร้าง + มอบหมาย'}</button>
+            </div>
+          ) : (
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <div className="text-xs text-slate-600">ผู้ประเมิน: <b>{ev.evaluator_name}</b> · {ev.evaluator_email}</div>
+              <div className="flex items-center gap-2">
+                {ev.evaluated
+                  ? <span className="text-[11px] px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-200">✓ ประเมินแล้ว</span>
+                  : <span className="text-[11px] px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-200">⏳ รอผู้ประเมิน</span>}
+                {ev.evaluated && <button type="button" onClick={() => onViewDoc(roundKey)} className="text-xs bg-slate-100 hover:bg-slate-200 px-2.5 py-1 rounded">📄 ดูเอกสาร</button>}
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    function ProbationRoundsPanel({ candidate, daysInProbation, onCreate, onViewDoc }) {
+      const evals = candidate.probationEvals || {};
+      const rounds = [
+        { key:'day30', day:30, label:'รอบที่ 1' },
+        { key:'day60', day:60, label:'รอบที่ 2' },
+        { key:'day90', day:90, label:'รอบที่ 3 (สุดท้าย)' },
+      ];
+      return (
+        <div className="space-y-2">
+          {rounds.map(r => (
+            <ProbRoundRow key={r.key} candidate={candidate} roundKey={r.key} day={r.day} label={r.label}
+              ev={evals[r.key]} daysInProbation={daysInProbation} onCreate={onCreate} onViewDoc={onViewDoc} />
+          ))}
         </div>
       );
     }
@@ -3341,7 +3654,7 @@ ${HR_EMAIL}`;
       );
     }
 
-    function Detail({ c, onClose, onAdvance, onToggleDoc, onProbationPassed, onUploadFile, onStartApproval, onSendSelfServiceLink, onMilestoneEval, onSetName, onDropCandidate, onCancelPosition, onSaveDoc, onUpdateDistribution, onUpdateShortlist, onAddDoc, onRemoveDoc, onUpdateAttachments, onCancelStepDoc }) {
+    function Detail({ c, onClose, onAdvance, onToggleDoc, onProbationPassed, onUploadFile, onStartApproval, onSendSelfServiceLink, onMilestoneEval, onSetName, onDropCandidate, onCancelPosition, onSaveDoc, onUpdateDistribution, onUpdateShortlist, onAddDoc, onRemoveDoc, onUpdateAttachments, onCancelStepDoc, onCreateProbationRound }) {
       const status = deriveStatus(c);
       const documents = c.documents?.length ? c.documents : DOCUMENT_TEMPLATE.map(d => ({ ...d, received:false, receivedDate:null }));
       const probation = c.probation ?? {};
@@ -3351,6 +3664,7 @@ ${HR_EMAIL}`;
       const [showApprovalSetup, setShowApprovalSetup] = useState(false);
       const [showMilestoneEval, setShowMilestoneEval] = useState(null);
       const [showNameForm, setShowNameForm] = useState(false);
+      const [probDocView, setProbDocView] = useState(null);
       const hasName = !!c.name;
       const title = hasName ? c.name : c.position;
       const subtitle = hasName ? `${c.position} · ${c.department}` : `${c.department} · ${c.type === 'replacement' ? 'ทดแทนคนลาออก' : 'อัตราใหม่'}`;
@@ -3508,24 +3822,34 @@ ${HR_EMAIL}`;
                 <div className="mt-3 text-[11px] text-slate-500">💡 milestone อัพเดทอัตโนมัติตามวันที่ · ผลการประเมินรายช่วงให้กรอกในเอกสาร Probation Evaluation Form ด้านล่าง</div>
               </div>
 
-              {/* Final Probation Evaluation Form + assign evaluator */}
+              {/* Per-round probation evaluation (Day 30/60/90) — admin creates 1 doc per round */}
               <div className="mt-4 bg-violet-50 border border-violet-200 rounded-xl p-4">
-                <div className="text-sm font-semibold text-violet-900 mb-1">📝 เอกสารประเมินผลทดลองงาน (Final)</div>
+                <div className="text-sm font-semibold text-violet-900 mb-1">📝 ประเมินผลทดลองงาน (รายรอบ)</div>
                 <div className="text-xs text-violet-700 mb-3">
-                  HR สร้างคำขอ + มอบหมายผู้ประเมิน → ผู้ประเมินเข้าระบบกรอก 3 รอบ (Day 30 / 60 / 90) + สรุปสถานะ Day 119
+                  แต่ละรอบ HR สร้างเอกสาร + มอบหมายผู้ประเมิน → ผู้ประเมินกรอกใน "งานของฉัน" (ติ๊กคะแนน + คอมเมนต์ + ลงนาม)
                 </div>
-                <DocumentBuilder candidate={c} step={6} user={{ name: c.updated_by || c.created_by || 'HR' }} onSave={(step, data) => onSaveDoc(step, data)} onCancel={() => onCancelStepDoc(6)} />
-                <div className="mt-3">
-                  <AssignDistribution
-                    candidate={c} step={6}
-                    title="👤 มอบหมายผู้ประเมินทดลองงาน (อีเมล = username)"
-                    helperText="ใส่อีเมลผู้ประเมิน → ระบบส่งงานเข้า &quot;งานของฉัน&quot; ของเขา · กรอก 3 รอบ (Day 30/60/90) + สรุป Day 119 ในระบบ"
-                    accent="violet"
-                    onUpdate={(log) => onUpdateDistribution(6, log)}
-                  />
-                </div>
+                <ProbationRoundsPanel candidate={c} daysInProbation={daysInProbation}
+                  onCreate={(roundKey, payload) => onCreateProbationRound(roundKey, payload)}
+                  onViewDoc={(roundKey) => setProbDocView(roundKey)} />
               </div>
             </Section>
+          )}
+
+          {probDocView && c.probationEvals?.[probDocView] && (
+            <div className="fixed inset-0 z-40 bg-slate-900/40 backdrop-blur-sm overflow-y-auto p-2 sm:p-6" onClick={() => setProbDocView(null)}>
+              <div className="bg-white rounded-2xl shadow-xl border border-slate-200 w-full max-w-3xl mx-auto my-2 sm:my-8" onClick={(e) => e.stopPropagation()}>
+                <div className="flex items-start justify-between p-4 border-b border-slate-100 sticky top-0 bg-white rounded-t-2xl z-10 no-print">
+                  <div className="text-base font-semibold text-slate-900">📄 เอกสารประเมิน Day {c.probationEvals[probDocView].dayLabel}</div>
+                  <div className="flex items-center gap-2">
+                    <button onClick={() => window.print()} className="text-xs bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-lg ibtn">🖨 พิมพ์</button>
+                    <button onClick={() => setProbDocView(null)} className="p-1 rounded-lg hover:bg-slate-100 text-slate-500">✕</button>
+                  </div>
+                </div>
+                <div className="p-6 sm:p-10">
+                  <ProbationRoundDoc data={c.probationEvals[probDocView]} candidate={c} round={probDocView} />
+                </div>
+              </div>
+            </div>
           )}
 
           {c.notes && (
@@ -4111,6 +4435,12 @@ ${HR_EMAIL}`;
       function updateShortlist(c, list) {
         patchCandidate(c.id, x => ({ ...x, shortlist: list }));
       }
+      function createProbationRound(c, roundKey, payload) {
+        patchCandidate(c.id, x => ({
+          ...x,
+          probationEvals: { ...(x.probationEvals ?? {}), [roundKey]: { ...payload } }
+        }));
+      }
       async function saveGeneratedDoc(c, step, data, approvers) {
         const docInfo = DOC_LABELS[step];
         const willAssign = approvers?.length && APPROVAL_STEPS.includes(step) && approvers.every(a => a.name && a.email);
@@ -4295,6 +4625,7 @@ ${HR_EMAIL}`;
               onUpdateShortlist={(list) => updateShortlist(opened, list)}
               onAddDoc={() => addDocItem(opened)}
               onRemoveDoc={(key) => removeDocItem(opened, key)}
+              onCreateProbationRound={(roundKey, payload) => createProbationRound(opened, roundKey, payload)}
             />
           )}
 
@@ -4366,23 +4697,33 @@ ${HR_EMAIL}`;
             title: 'พิจารณา Shortlist ผู้สมัคร', subject: label,
           });
         }
-        // 3) ASSIGNED via distributions — Step 4 scorecard · Step 6 probation · generic
+        // 3) ASSIGNED via distributions — Step 4 scorecard · generic ack
         const dists = c.distributions || {};
         for (const k of Object.keys(dists)) {
           const step = Number(k);
           for (const e of (dists[k] || [])) {
             if (normalizeEmail(e.email) !== me) continue;
-            const kind = step === 4 ? 'eval-scorecard' : step === 6 ? 'eval-probation' : 'ack';
+            const kind = step === 4 ? 'eval-scorecard' : 'ack';
             out.push({
               kind, id: `${c.id}|dist|${k}|${e.id}`, candidateId: c.id, candidate: c,
               step, entry: e, docData: c.generatedDocs?.[step]?.data,
               state: e.done ? 'done' : 'todo',
-              title: kind === 'eval-scorecard' ? 'ประเมินสัมภาษณ์ (Scorecard)'
-                : kind === 'eval-probation' ? 'ประเมินทดลองงาน (Day 30/60/90)'
-                : 'งานที่ได้รับมอบหมาย',
+              title: kind === 'eval-scorecard' ? 'ประเมินสัมภาษณ์ (Scorecard)' : 'งานที่ได้รับมอบหมาย',
               subject: label,
             });
           }
+        }
+        // 4) PER-ROUND probation — evaluator fills one document per round (Day 30/60/90)
+        const pevals = c.probationEvals || {};
+        for (const rk of Object.keys(pevals)) {
+          const ev = pevals[rk];
+          if (!ev || normalizeEmail(ev.evaluator_email) !== me) continue;
+          out.push({
+            kind: 'prob-eval', id: `${c.id}|probeval|${rk}`, candidateId: c.id, candidate: c,
+            step: 6, roundKey: rk, dayLabel: ev.dayLabel, ev,
+            state: ev.evaluated ? 'done' : 'todo',
+            title: `ประเมินทดลองงาน · Day ${ev.dayLabel}`, subject: label,
+          });
         }
       }
       const rank = { todo: 0, waiting: 1, rejected: 2, done: 3 };
@@ -4413,6 +4754,16 @@ ${HR_EMAIL}`;
         setActiveId(null); setSignature(null); setSignComment(''); setRejectMode(false);
         setRejectReason(''); setShowForm(false); setShowDoc(false); setVerdicts({});
       };
+
+      // open an attached file via a short-lived signed URL
+      async function openAttachment(path) {
+        try {
+          const url = await getSignedUrl(path);
+          window.open(url, '_blank', 'noopener');
+        } catch (e) {
+          showToast('เปิดเอกสารไม่สำเร็จ: ' + (e?.message || ''), 'warning');
+        }
+      }
 
       // ---- write-back handlers ----
       const [signing, setSigning] = useState(false);
@@ -4470,30 +4821,57 @@ ${HR_EMAIL}`;
         backToList();
       }
 
-      function saveProbation(task, data) {
+      // Evaluator submits ONE round (Day 30/60/90)
+      async function saveProbationRound(task, data) {
+        const ip = await getClientIp();
+        const rk = task.roundKey;
         patchCandidate(task.candidateId, x => {
-          const gd = { ...(x.generatedDocs || {}) };
-          gd[6] = { ...(gd[6] || {}), data: { ...data, __submitted: true }, updatedAt: new Date().toISOString() };
-          const dists = { ...(x.distributions || {}) };
-          if (task.entry) dists[6] = (dists[6] || []).map(e => e.id === task.entry.id ? { ...e, done: true, completedAt: new Date().toISOString() } : e);
-          return { ...x, generatedDocs: gd, distributions: dists };
+          const pe = { ...(x.probationEvals || {}) };
+          pe[rk] = {
+            ...(pe[rk] || {}),
+            scores: data.scores, comment: data.comment,
+            evaluator_signature: data.evaluator_signature, evaluator_signedAt: new Date().toISOString(), evaluator_ip: ip,
+            evaluated: true,
+            ...(data.final_status ? { final_status: data.final_status } : {}),
+          };
+          return { ...x, probationEvals: pe };
         });
-        showToast('✓ ส่งผลประเมินทดลองงานกลับ HR แล้ว', 'success');
+        showToast('✓ ส่งผลประเมิน + ลงนามกลับ HR แล้ว', 'success');
         backToList();
       }
 
-      function saveShortlistVerdict(task) {
+      // Employee acknowledges ONE round's result (signs)
+      async function ackProbationRound(task, signature) {
+        if (!signature) { showToast('กรุณาลงลายเซ็นรับทราบก่อน', 'warning'); return; }
+        const ip = await getClientIp();
+        const rk = task.roundKey;
+        patchCandidate(task.candidateId, x => {
+          const pe = { ...(x.probationEvals || {}) };
+          pe[rk] = { ...(pe[rk] || {}), ack_signature: signature, ack_signedAt: new Date().toISOString(), ack_ip: ip, acknowledged: true };
+          // Day 90 acknowledged -> finalize probation status
+          let status = x.status;
+          if (rk === 'day90' && pe.day90?.final_status) {
+            status = pe.day90.final_status === 'passed' ? 'passed' : pe.day90.final_status === 'failed' ? 'rejected' : x.status;
+          }
+          return { ...x, probationEvals: pe, status };
+        });
+        showToast('✓ ลงนามรับทราบผลประเมินแล้ว', 'success');
+        backToList();
+      }
+
+      // send ONE candidate's verdict back to HR (1 button per shortlisted candidate)
+      function saveShortlistVerdict(task, itemKey, verdict) {
+        if (!verdict) return;
         patchCandidate(task.candidateId, x => {
           const sl = (x.shortlist || []).map(it => {
             const key = it.id || it.name;
-            return key && verdicts[key]
-              ? { ...it, verdict: verdicts[key], verdictAt: new Date().toISOString(), verdictBy: myName }
+            return key === itemKey
+              ? { ...it, verdict, verdictAt: new Date().toISOString(), verdictBy: myName }
               : it;
           });
           return { ...x, shortlist: sl };
         });
-        showToast('✓ ส่งผลพิจารณากลับ HR แล้ว', 'success');
-        backToList();
+        showToast(verdict === 'pass' ? '✓ ส่งผล "ผ่าน" กลับ HR แล้ว' : '✕ ส่งผล "ไม่ผ่าน" กลับ HR แล้ว', 'success');
       }
 
       function markAckDone(task) {
@@ -4582,6 +4960,26 @@ ${HR_EMAIL}`;
                       <DocComp data={docData} candidate={c} />
                     </div>
                   </div>
+
+                  {(() => {
+                    const atts = [...(c.approvalAttachments || []), ...((docData.attachments) || [])];
+                    if (!atts.length) return null;
+                    return (
+                      <div className="bg-amber-50 border border-amber-200 rounded-2xl p-5 mb-4">
+                        <div className="text-xs font-semibold text-amber-900 mb-2">📎 เอกสารแนบประกอบการพิจารณา ({atts.length}) · กดเพื่อเปิดดู</div>
+                        <ul className="space-y-1.5">
+                          {atts.map((a, i) => (
+                            <li key={i} className="text-sm bg-white border border-amber-200 rounded-lg px-3 py-2 flex items-center justify-between gap-2">
+                              <span className="truncate">📄 {a.name || a}</span>
+                              {a.path
+                                ? <button onClick={() => openAttachment(a.path)} className="text-xs bg-amber-600 hover:bg-amber-700 text-white px-3 py-1 rounded-lg ibtn whitespace-nowrap">เปิดดู ↗</button>
+                                : <span className="text-[10px] text-slate-400 whitespace-nowrap">ไฟล์เก่า · เปิดไม่ได้</span>}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    );
+                  })()}
 
                   <div className="bg-white border border-slate-200 rounded-2xl p-5 mb-4">
                     <div className="text-xs font-semibold text-slate-600 mb-2">📋 ลำดับการอนุมัติ</div>
@@ -4677,20 +5075,46 @@ ${HR_EMAIL}`;
               </>
             )}
 
-            {/* ===== EVAL: PROBATION ===== */}
-            {active.kind === 'eval-probation' && (
+            {/* ===== EVAL: PROBATION (per round) ===== */}
+            {active.kind === 'prob-eval' && (
               <>
                 <div className="bg-white border border-slate-200 rounded-2xl p-5 mb-4 text-center">
                   <div className="text-5xl mb-3">📋</div>
-                  <div className="text-sm font-semibold text-slate-900 mb-1">ประเมินทดลองงาน 120 วัน</div>
-                  <div className="text-xs text-slate-500 mb-4">กรอกคะแนน 3 รอบ (Day 30/60/90) + สรุปสถานะ Day 119</div>
+                  <div className="text-sm font-semibold text-slate-900 mb-1">ประเมินทดลองงาน · Day {active.dayLabel}</div>
+                  <div className="text-xs text-slate-500 mb-4">ติ๊กคะแนน + คอมเมนต์ + ลงนาม{active.roundKey === 'day90' ? ' + สรุปผ่าน/ไม่ผ่าน' : ''}</div>
                   {active.state === 'done'
-                    ? <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 text-emerald-900">✓ ส่งผลประเมินกลับ HR แล้ว</div>
-                    : <button onClick={() => setShowForm(true)} className="bg-violet-600 hover:bg-violet-700 text-white px-6 py-3 rounded-xl font-medium text-sm ibtn">📋 เปิดฟอร์มประเมิน</button>}
+                    ? <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 text-emerald-900">✓ ส่งผลประเมิน Day {active.dayLabel} กลับ HR แล้ว</div>
+                    : <button onClick={() => setShowForm(true)} className="bg-violet-600 hover:bg-violet-700 text-white px-6 py-3 rounded-xl font-medium text-sm ibtn">📋 เปิดฟอร์มประเมิน Day {active.dayLabel}</button>}
                 </div>
                 {showForm && (
-                  <ProbationEvalForm initial={active.docData} candidate={c} user={{ name: myName }}
-                    onClose={() => setShowForm(false)} onSave={(data) => saveProbation(active, data)} />
+                  <ProbationRoundForm roundKey={active.roundKey} dayLabel={active.dayLabel} candidate={c} initial={active.ev} user={{ name: myName }}
+                    onClose={() => setShowForm(false)} onSave={(data) => saveProbationRound(active, data)} />
+                )}
+              </>
+            )}
+
+            {/* ===== ACK: PROBATION (employee acknowledges result) ===== */}
+            {active.kind === 'prob-ack' && (
+              <>
+                <div className="bg-white border border-slate-200 rounded-2xl p-5 mb-4">
+                  <div className="text-xs font-semibold text-slate-600 mb-2">📄 ผลการประเมินทดลองงาน · Day {active.dayLabel}</div>
+                  <div className="border border-slate-200 rounded-xl p-4">
+                    <ProbationRoundDoc data={active.ev} candidate={c} round={active.roundKey} />
+                  </div>
+                </div>
+                {active.state === 'done' ? (
+                  <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 text-center text-sm text-emerald-900 mb-4">✓ คุณลงนามรับทราบผลประเมินนี้แล้ว</div>
+                ) : (
+                  <>
+                    <div className="bg-white border border-slate-200 rounded-2xl p-5 mb-4">
+                      <div className="text-xs font-semibold text-slate-600 mb-2">✍️ ลงนามรับทราบผลประเมิน</div>
+                      <SignaturePad onChange={setSignature} />
+                    </div>
+                    <button onClick={() => ackProbationRound(active, signature)} disabled={!signature || signing}
+                      className={`w-full py-3 rounded-xl text-white font-medium text-sm ibtn mb-4 ${signature && !signing ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-emerald-300 cursor-not-allowed'}`}>
+                      ✓ ลงนามรับทราบผลประเมิน
+                    </button>
+                  </>
                 )}
               </>
             )}
@@ -4704,26 +5128,42 @@ ${HR_EMAIL}`;
                   const key = s.id || s.name || String(i);
                   const v = verdicts[key];
                   const locked = active.state === 'done' || !!s.verdict;
+                  const files = s.files || [];
                   return (
-                    <div key={key} className="bg-slate-50 border border-slate-200 rounded-lg p-3 mb-2 flex items-center justify-between gap-2 flex-wrap">
-                      <span className="text-sm flex-1 min-w-0 truncate">📄 {s.name || `ผู้สมัคร ${i + 1}`}</span>
-                      {locked
-                        ? <span className="text-xs text-slate-500">{s.verdict === 'pass' ? '✓ ผ่าน' : s.verdict === 'reject' ? '✕ ไม่ผ่าน' : '—'}</span>
-                        : (
-                          <div className="flex items-center gap-2">
-                            <button onClick={() => setVerdicts(p => ({ ...p, [key]: 'pass' }))} className={`text-xs px-3 py-1 rounded-lg ibtn ${v === 'pass' ? 'bg-emerald-600 text-white' : 'border border-emerald-300 text-emerald-700'}`}>✓ ผ่าน</button>
-                            <button onClick={() => setVerdicts(p => ({ ...p, [key]: 'reject' }))} className={`text-xs px-3 py-1 rounded-lg ibtn ${v === 'reject' ? 'bg-rose-600 text-white' : 'border border-rose-300 text-rose-700'}`}>✕ ไม่ผ่าน</button>
+                    <div key={key} className="bg-slate-50 border border-slate-200 rounded-lg p-3 mb-2">
+                      <div className="flex items-center justify-between gap-2 flex-wrap">
+                        <span className="text-sm font-medium flex-1 min-w-0 truncate">📄 {s.name || `ผู้สมัคร ${i + 1}`}</span>
+                        {locked
+                          ? <span className="text-xs text-slate-500">{s.verdict === 'pass' ? '✓ ผ่าน' : s.verdict === 'reject' ? '✕ ไม่ผ่าน' : '—'}</span>
+                          : (
+                            <div className="flex items-center gap-2">
+                              <button onClick={() => setVerdicts(p => ({ ...p, [key]: 'pass' }))} className={`text-xs px-3 py-1 rounded-lg ibtn ${v === 'pass' ? 'bg-emerald-600 text-white' : 'border border-emerald-300 text-emerald-700'}`}>✓ ผ่าน</button>
+                              <button onClick={() => setVerdicts(p => ({ ...p, [key]: 'reject' }))} className={`text-xs px-3 py-1 rounded-lg ibtn ${v === 'reject' ? 'bg-rose-600 text-white' : 'border border-rose-300 text-rose-700'}`}>✕ ไม่ผ่าน</button>
+                            </div>
+                          )}
+                      </div>
+                      <div className="mt-2 space-y-1">
+                        {files.length === 0 && <div className="text-[11px] text-slate-400 italic">ยังไม่มีไฟล์แนบ</div>}
+                        {files.map((f, fi) => (
+                          <div key={fi} className="text-xs bg-white border border-slate-200 rounded px-2 py-1 flex items-center justify-between gap-2">
+                            <span className="truncate">📎 {f.name || f}{f.size ? ` · ${f.size}` : ''}</span>
+                            {f.path
+                              ? <button onClick={() => openAttachment(f.path)} className="text-xs bg-sky-600 hover:bg-sky-700 text-white px-2.5 py-0.5 rounded-lg ibtn whitespace-nowrap">เปิดดู ↗</button>
+                              : <span className="text-[10px] text-slate-400 whitespace-nowrap">ไฟล์เก่า · เปิดไม่ได้</span>}
                           </div>
+                        ))}
+                      </div>
+                      {locked
+                        ? <div className="mt-2 text-[11px] text-emerald-700 text-center">✓ ส่งผลกลับ HR แล้ว</div>
+                        : (
+                          <button onClick={() => saveShortlistVerdict(active, key, v)} disabled={!v}
+                            className={`w-full mt-2 py-2 rounded-lg text-white text-xs font-medium ibtn ${v ? 'bg-sky-600 hover:bg-sky-700' : 'bg-slate-300 cursor-not-allowed'}`}>
+                            ส่งผล{v === 'pass' ? ' "ผ่าน"' : v === 'reject' ? ' "ไม่ผ่าน"' : ''} ของ "{s.name || `ผู้สมัคร ${i + 1}`}" กลับ HR
+                          </button>
                         )}
                     </div>
                   );
                 })}
-                {active.state !== 'done' && (active.mineItems || []).length > 0 && (
-                  <button onClick={() => saveShortlistVerdict(active)} disabled={Object.keys(verdicts).length === 0}
-                    className={`w-full mt-2 py-2.5 rounded-xl text-white font-medium text-sm ibtn ${Object.keys(verdicts).length ? 'bg-sky-600 hover:bg-sky-700' : 'bg-slate-300 cursor-not-allowed'}`}>
-                    ส่งผลพิจารณากลับ HR
-                  </button>
-                )}
               </div>
             )}
 
