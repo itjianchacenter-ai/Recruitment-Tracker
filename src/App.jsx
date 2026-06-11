@@ -3088,7 +3088,7 @@ ${HR_EMAIL}`;
               <div className={`text-[10px] text-right mt-0.5 ${comment.length >= 350 ? 'text-amber-600' : 'text-slate-400'}`}>{comment.length}/350</div>
             </div>
 
-            {/* สรุปผลทดลองงาน — ทุกรอบต้องสรุป (ไม่ผ่านได้ตั้งแต่ Day 30/60) */}
+            {/* สรุปผลทดลองงานรอบนี้ (อยู่ในฟอร์มผู้ประเมิน · ไม่ขึ้นในเอกสาร) */}
             <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
               <div className="text-xs font-semibold text-amber-900 mb-2">สรุปผลทดลองงานรอบนี้{isFinal ? ' (รอบสุดท้าย)' : ''} <span className="text-rose-500">*</span></div>
               <div className="text-[10px] text-amber-700 mb-2">เลือกผลของรอบนี้ · "ไม่ผ่าน" = ปิดโปร · "ผ่าน" = บรรจุ · "ต่อ" = ไปประเมินรอบถัดไป</div>
@@ -4263,10 +4263,12 @@ ${HR_EMAIL}`;
         return null;
       };
       const finished = (candidates || []).filter(c => closingRound(c));
+      const passCount = finished.filter(c => closingRound(c)?.final_status === 'passed').length;
+      const failCount = finished.length - passCount;
       return (
         <div className="bg-violet-50 border border-violet-200 rounded-lg p-3 mb-3">
           <button type="button" onClick={() => setOpen(o => !o)} className="w-full flex items-center justify-between gap-2 text-left">
-            <span className="text-xs font-semibold text-violet-900">🎓 พนักงานที่ผ่านโปรแล้ว ({finished.length}) <span className="font-normal text-violet-600">· เก็บแยกจากคนที่ยังประเมินอยู่</span></span>
+            <span className="text-xs font-semibold text-violet-900">🗂 ประวัติทดลองงาน (จบแล้ว {finished.length}) <span className="font-normal text-violet-600">· ✓ ผ่าน {passCount} · ✕ ไม่ผ่าน {failCount} · เปิดเอกสารย้อนหลังได้</span></span>
             <span className="text-violet-500 text-xs whitespace-nowrap">{open ? '▲ ซ่อน' : '▼ ดู'}</span>
           </button>
           {open && (
