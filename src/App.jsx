@@ -868,6 +868,25 @@ function toRow(c) {
       );
     }
 
+    // Section 4 (ข้อเสนอแนะ) — renders comments typed by approvers when they
+    // signed in "งานของฉัน". Falls back to a blank box when none.
+    function ApproverComments({ workflow }) {
+      const comments = (workflow?.approvers || []).filter(a => a.comment && String(a.comment).trim());
+      if (!comments.length) {
+        return <div style={{ border:'1px solid #94a3b8', borderTop:'none', minHeight:'80px', padding:'10px' }}></div>;
+      }
+      return (
+        <div style={{ border:'1px solid #94a3b8', borderTop:'none', padding:'10px' }}>
+          {comments.map((a, i) => (
+            <div key={i} style={{ marginBottom: i < comments.length - 1 ? '7px' : 0, paddingBottom: i < comments.length - 1 ? '7px' : 0, borderBottom: i < comments.length - 1 ? '1px dashed #cbd5e1' : 'none' }}>
+              <div style={{ fontWeight:600 }}>{a.name} · <span style={{ fontWeight:400, color:'#64748b' }}>{a.role}</span></div>
+              <div style={{ whiteSpace:'pre-wrap', marginTop:'2px' }}>{a.comment}</div>
+            </div>
+          ))}
+        </div>
+      );
+    }
+
     function SignatureBlocks({ labels, workflow }) {
       // If workflow provided with approvers, use that. Otherwise use default labels with blank lines.
       const useWf = workflow?.approvers?.length > 0;
@@ -1855,7 +1874,7 @@ ${HR_EMAIL}`;
           />
 
           <div className="section-bar" style={{marginTop:'14px'}}>ส่วนที่ 4 : ข้อเสนอแนะเพิ่มเติม</div>
-          <div style={{ border:'1px solid #94a3b8', borderTop:'none', minHeight:'80px', padding:'10px' }}></div>
+          <ApproverComments workflow={candidate.approvalWorkflows?.[1]} />
 
           <div style={{ fontSize:'9px', color:'#94a3b8', marginTop:'12px', textAlign:'center' }}>
             สร้างโดยระบบ Recruitment 120 Days · JIANCHA GROUP · {fmtDate(today())}
@@ -2364,7 +2383,7 @@ ${HR_EMAIL}`;
           />
 
           <div className="section-bar" style={{marginTop:'14px'}}>ส่วนที่ 4 : ข้อเสนอแนะเพิ่มเติม (ฝ่ายบริหาร)</div>
-          <div style={{ border:'1px solid #94a3b8', borderTop:'none', minHeight:'80px', padding:'10px' }}></div>
+          <ApproverComments workflow={candidate.approvalWorkflows?.[5]} />
 
           <div style={{ fontSize:'9px', color:'#94a3b8', marginTop:'12px', textAlign:'center' }}>
             สร้างโดยระบบ Recruitment 120 Days · JIANCHA GROUP · {fmtDate(today())}
@@ -4231,6 +4250,7 @@ ${HR_EMAIL}`;
       const tasks = useMemo(() => buildMyTasks(candidates, myEmail), [candidates, myEmail]);
       const [activeId, setActiveId] = useState(null);
       const [signature, setSignature] = useState(null);
+      const [signComment, setSignComment] = useState('');
       const [rejectMode, setRejectMode] = useState(false);
       const [rejectReason, setRejectReason] = useState('');
       const [showForm, setShowForm] = useState(false);
@@ -4240,7 +4260,7 @@ ${HR_EMAIL}`;
       const active = tasks.find(t => t.id === activeId) || null;
 
       const backToList = () => {
-        setActiveId(null); setSignature(null); setRejectMode(false);
+        setActiveId(null); setSignature(null); setSignComment(''); setRejectMode(false);
         setRejectReason(''); setShowForm(false); setShowDoc(false); setVerdicts({});
       };
 
@@ -4256,7 +4276,7 @@ ${HR_EMAIL}`;
           const approvers = (wf.approvers || []).map(a => ({ ...a }));
           const i = approvers.findIndex(a => normalizeEmail(a.email) === normalizeEmail(task.mine.email));
           if (i < 0) return x;
-          approvers[i] = { ...approvers[i], status: 'approved', signedAt: new Date().toISOString(), ip, signature_data: signature };
+          approvers[i] = { ...approvers[i], status: 'approved', signedAt: new Date().toISOString(), ip, signature_data: signature, comment: signComment.trim() };
           const nextIdx = approvers.findIndex(a => a.status === 'waiting');
           if (nextIdx >= 0) { approvers[nextIdx] = { ...approvers[nextIdx], status: 'pending' }; wf.status = 'in_progress'; }
           else { wf.status = 'completed'; wf.completedAt = new Date().toISOString(); }
@@ -4441,6 +4461,10 @@ ${HR_EMAIL}`;
 
                   {active.state === 'todo' && !rejectMode && (
                     <>
+                      <div className="bg-white border border-slate-200 rounded-2xl p-5 mb-4">
+                        <div className="text-xs font-semibold text-slate-600 mb-2">💬 ข้อเสนอแนะเพิ่มเติม <span className="font-normal text-slate-400">(ไม่บังคับ · จะแสดงในส่วนที่ 4 ของเอกสาร)</span></div>
+                        <textarea rows={2} value={signComment} onChange={e => setSignComment(e.target.value)} className="input" placeholder="พิมพ์ความเห็น/ข้อเสนอแนะ (ถ้ามี)..." />
+                      </div>
                       <div className="bg-white border border-slate-200 rounded-2xl p-5 mb-4">
                         <div className="text-xs font-semibold text-slate-600 mb-2">✍️ ลายเซ็น</div>
                         <SignaturePad onChange={setSignature} />
