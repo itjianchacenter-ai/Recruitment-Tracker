@@ -17,7 +17,7 @@
 |---|---|---|---|
 | Auth / RLS | 🔴 2 | 🟢 8 | anon เรียก REST → `[]` (อ่านไม่ได้) · `pg_policies` ทุกตัวเป็น `{authenticated}` |
 | Audit trail | 🟠 | 🟢 8 | `candidate_audit` ไม่มี FK cascade · trigger `security definer` · ไม่มี policy update/delete = append-only |
-| **Edge Functions** | — | 🔴 2 | **ไม่มี edge-runtime container** → `/functions/*` = HTTP 503 |
+| **Edge Functions** | — | 🟢 7\* | \*deploy แล้ว (admin-users/client-ip ทำงานเต็ม · send-email รอ M365 secrets) |
 | **Backup / Ops** | 🟠 5 | 🟠 5→7\* | \*เพิ่ง**ตั้ง nightly pg_dump แล้ว** · เหลือ off-site copy · droplet 1GB RAM (swap 39%) |
 | PDPA / Privacy | 🔴 3 | 🟠 5 | ยังไม่มี consent/retention — แต่ยังไม่มีข้อมูลจริง |
 | Frontend quality | 🔴 | 🟢 7 | ไม่มี console.log ค้าง · toast 81 · 0 npm vuln · ไม่มี secret หลุด git · +ErrorBoundary แล้ว |
@@ -33,17 +33,17 @@
 4. **`admin-users` default-deny + อ่าน `app_metadata` เท่านั้น** — ปิดช่อง self-promotion (เดิมอ่าน `user_metadata` ที่ผู้ใช้แก้เองได้ + ถือว่า "ไม่มี role = admin")
 5. **`schema.sql` ล็อก authenticated-only** — รวม `auth-rls.sql` เข้ามา → re-run schema แล้วไม่เปิด anon อีก (ปิด footgun)
 6. **ตั้ง role ของ hr01 ใน `app_metadata`** บน prod DB (เดิมอยู่แค่ `user_metadata`)
+7. **Deploy Edge Functions บน self-host** — เพิ่ม `supabase-edge-functions` (cap 200m · หยุด `meta` ที่ไม่ได้ใช้เพื่อคืน RAM) · `admin-users` + `client-ip` ทำงานเต็ม (ทดสอบ end-to-end: hr01 list users → 200) · `send-email` deploy + authz แล้ว เหลือใส่ M365 secrets · `deploy.sh` sync functions อัตโนมัติแล้ว
 
 ---
 
 ## 🔴 P0 — ต้องทำก่อนใส่ข้อมูลจริง (ที่ยังเหลือ)
 
-### 1. Edge Functions ไม่ได้ deploy → email + จัดการ user ใช้ไม่ได้
-- หลักฐาน: ไม่มี edge-runtime container · `/functions/{send-email,admin-users,client-ip}` → **503 "name resolution failed"**
-- กระทบ: เมนู **"ผู้ใช้ & รหัสผ่าน"** (admin สร้าง user) error · **อีเมลทุก step** ส่งไม่ได้ · e-sign IP ตกเป็น '-' (degraded แต่ทำงาน)
-- ทำ: เพิ่ม `edge-runtime` service ใน docker-compose ของ self-host + deploy 3 functions + ตั้ง M365 secrets
-  - ⚠️ **ระวัง RAM**: droplet 1GB ตอนนี้ mem 63% / swap 39% · เพิ่ม container อาจทำให้ไม่เสถียร
-  - 💡 ทางเลือกที่ดีกว่า: **ย้าย frontend ไป Cloudflare Pages (ฟรี)** เหลือแต่ Supabase บน droplet → คืน RAM + เลิกปัญหา build OOM/commit dist ไปในตัว
+### 1. ✅ Edge Functions — deploy แล้ว · เหลือ M365 secrets สำหรับอีเมล
+- **ทำแล้ว:** `supabase-edge-functions` รันบน self-host เดิม (ยึดโครงสร้าง) · `admin-users` (จัดการ user) + `client-ip` (e-sign IP) **ทำงานเต็ม ทดสอบแล้ว** · RAM นิ่ง (edge-runtime ใช้ ~81/200 MB)
+- **เหลือ:** `send-email` deploy + ปิด open-relay แล้ว แต่ต้องใส่ **M365 secrets** ในไฟล์ env ของ functions ถึงจะส่งอีเมลจริงได้:
+  - เพิ่มใน `/opt/supabase-selfhost/docker/docker-compose.override.yml` (service `functions` → `environment:` `M365_TENANT_ID/CLIENT_ID/CLIENT_SECRET/SENDER_ADDRESS`) แล้ว `docker compose up -d functions`
+  - ตั้ง M365 app registration (Mail.Send application permission + admin consent + Application Access Policy จำกัด `Hr.jc@jianchatea.com`) — ดู `EMAIL_SETUP_M365.md`
 
 ### 2. Backup off-site (ต่อจากที่ตั้งไว้)
 - ตอนนี้ backup อยู่บน droplet ตัวเดียว → droplet หาย = backup หายด้วย

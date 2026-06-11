@@ -8,7 +8,7 @@ set -euo pipefail
 APP_DIR="/opt/recruitment"
 WEB_DIR="/var/www/recruitment"
 
-echo "==> [1/3] sync to origin/main (hard)"
+echo "==> [1/4] sync to origin/main (hard)"
 cd "$APP_DIR"
 # Force working tree = origin/main. ใช้ fetch + reset --hard (ไม่ใช่ git pull)
 # เพราะ dist/ ที่ commit ไว้อาจถูกแก้ในเครื่องระหว่าง deploy ทำให้ pull abort.
@@ -18,7 +18,7 @@ git reset --hard origin/main
 
 # dist/ เป็น prebuilt ที่ build จากเครื่อง dev (RAM พอ) แล้ว commit เข้า git
 # ไม่รัน `npm run build` ที่นี่ เพราะ vite build OOM บน droplet 1GB
-echo "==> [2/3] publish prebuilt dist -> $WEB_DIR/dist"
+echo "==> [2/4] publish prebuilt dist -> $WEB_DIR/dist"
 mkdir -p "$WEB_DIR"
 rm -rf "$WEB_DIR/dist"
 cp -r dist "$WEB_DIR/dist"
