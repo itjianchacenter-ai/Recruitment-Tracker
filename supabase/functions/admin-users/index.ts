@@ -14,10 +14,11 @@
 //   SUPABASE_ANON_KEY and SUPABASE_SERVICE_ROLE_KEY into every function.
 //
 // AUTHZ: caller must send their logged-in JWT (the supabase-js client does
-//   this automatically via functions.invoke). We verify the token and reject
-//   anyone whose role === 'user'. Missing role = treated as admin, matching
-//   the client's roleFromSession() fail-safe (tighten later by setting
-//   app_metadata.role='user' on non-admins).
+//   this automatically via functions.invoke). We verify the token and allow
+//   ONLY callers whose app_metadata.role === 'admin' (default-deny). We read
+//   app_metadata (admin-only, not user-editable) and deliberately IGNORE
+//   user_metadata here — user_metadata can be self-set via auth.updateUser(),
+//   so trusting it for authz would let a 'user' self-promote to admin.
 //
 // REQUEST BODY (JSON): { action, ...payload }
 //   action 'list'            -> { }
@@ -67,8 +68,10 @@ serve(async (req) => {
     const { data: { user }, error: uErr } = await caller.auth.getUser();
     if (uErr || !user) return json({ error: 'unauthorized (invalid token)' }, 401);
 
-    const callerRole = (user.app_metadata?.role ?? user.user_metadata?.role) as string | undefined;
-    if (callerRole === 'user') return json({ error: 'forbidden (admin only)' }, 403);
+    // Read app_metadata ONLY (not user_metadata — see AUTHZ note above).
+    // Default-deny: missing/any-non-'admin' role is rejected.
+    const callerRole = user.app_metadata?.role as string | undefined;
+    if (callerRole !== 'admin') return json({ error: 'forbidden (admin only)' }, 403);
 
     // 2) service-role client for the privileged work
     const admin = createClient(SUPABASE_URL, SERVICE_ROLE, {

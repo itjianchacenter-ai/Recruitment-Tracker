@@ -24,11 +24,18 @@
 // =====================================================================
 
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.0';
 
 const TENANT  = Deno.env.get('M365_TENANT_ID')!;
 const CLIENT  = Deno.env.get('M365_CLIENT_ID')!;
 const SECRET  = Deno.env.get('M365_CLIENT_SECRET')!;
 const SENDER  = Deno.env.get('M365_SENDER_ADDRESS') ?? 'Hr.jc@jianchatea.com';
+
+// Auto-injected by Supabase into every Edge Function — used only to verify the
+// caller's token (never the service role here; this function sends mail, it
+// must not hold DB-admin power).
+const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
+const ANON_KEY     = Deno.env.get('SUPABASE_ANON_KEY')!;
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -56,6 +63,25 @@ serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
 
   try {
+    // AuthZ: require a logged-in (non-anon) user. Without this, anyone holding
+    // the public anon key (it ships in the browser bundle) could make this
+    // function send mail from the company HR mailbox = open relay / spoofing.
+    const token = (req.headers.get('Authorization') ?? '').replace(/^Bearer\s+/i, '');
+    if (!token) {
+      return new Response(JSON.stringify({ error: 'unauthorized (no token)' }), {
+        status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+    const caller = createClient(SUPABASE_URL, ANON_KEY, {
+      global: { headers: { Authorization: `Bearer ${token}` } },
+    });
+    const { data: { user }, error: uErr } = await caller.auth.getUser();
+    if (uErr || !user) {
+      return new Response(JSON.stringify({ error: 'unauthorized' }), {
+        status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
     const { to = [], cc = [], subject = '', body = '', html = false, attachments = [] } = await req.json();
     if (!to.length || !subject) {
       return new Response(JSON.stringify({ error: 'to[] and subject are required' }), {

@@ -1,7 +1,7 @@
 -- =====================================================================
 -- Recruitment 120 Days — Supabase schema
--- HR-only MVP: shared anon access, single candidates table, audit-friendly
--- Run this in Supabase SQL Editor (one-time setup)
+-- HR system: authenticated-only access (RLS), single candidates table, audit-friendly
+-- Run this in Supabase SQL Editor (one-time setup) — includes the auth lockdown
 -- =====================================================================
 
 -- 1. Extensions ------------------------------------------------------------
@@ -98,24 +98,34 @@ create trigger trg_candidates_audit
   for each row execute function public.log_candidate_audit();
 
 -- 6. Row Level Security ----------------------------------------------------
--- MVP: HR team shares one URL with the anon key. We allow anon to do CRUD on
--- this table only. Tighten later when we add auth/roles.
+-- Data is restricted to LOGGED-IN (authenticated) users only. The anon key
+-- ships in the browser bundle, so anon must NOT be able to touch employee PII.
+-- (This file used to grant anon full CRUD for the no-login MVP — that was the
+-- old `supabase/auth-rls.sql` lockdown, now folded in here so re-running this
+-- schema can never re-open the database to the public.)
 alter table public.candidates      enable row level security;
 alter table public.candidate_audit enable row level security;
 
+-- drop any legacy anon-open policies (safe if they don't exist)
 drop policy if exists "anon read candidates"   on public.candidates;
 drop policy if exists "anon write candidates"  on public.candidates;
 drop policy if exists "anon update candidates" on public.candidates;
 drop policy if exists "anon delete candidates" on public.candidates;
+drop policy if exists "auth read candidates"   on public.candidates;
+drop policy if exists "auth insert candidates" on public.candidates;
+drop policy if exists "auth update candidates" on public.candidates;
+drop policy if exists "auth delete candidates" on public.candidates;
 
-create policy "anon read candidates"   on public.candidates for select using (true);
-create policy "anon write candidates"  on public.candidates for insert with check (true);
-create policy "anon update candidates" on public.candidates for update using (true) with check (true);
-create policy "anon delete candidates" on public.candidates for delete using (true);
+create policy "auth read candidates"   on public.candidates for select to authenticated using (true);
+create policy "auth insert candidates" on public.candidates for insert to authenticated with check (true);
+create policy "auth update candidates" on public.candidates for update to authenticated using (true) with check (true);
+create policy "auth delete candidates" on public.candidates for delete to authenticated using (true);
 
 drop policy if exists "anon read audit" on public.candidate_audit;
-create policy "anon read audit" on public.candidate_audit for select using (true);
--- Inserts into candidate_audit happen via SECURITY DEFINER trigger, so no insert policy needed.
+drop policy if exists "auth read audit" on public.candidate_audit;
+create policy "auth read audit" on public.candidate_audit for select to authenticated using (true);
+-- Inserts into candidate_audit happen via SECURITY DEFINER trigger, so no insert
+-- policy is needed. No update/delete policy = the audit trail is append-only.
 
 -- 7. Realtime publication --------------------------------------------------
 -- Enables push updates so all HR users see changes live.
