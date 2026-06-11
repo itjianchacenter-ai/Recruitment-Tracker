@@ -3765,7 +3765,7 @@ ${HR_EMAIL}`;
       );
     }
 
-    function Detail({ c, onClose, onAdvance, onToggleDoc, onProbationPassed, onUploadFile, onStartApproval, onSendSelfServiceLink, onMilestoneEval, onSetName, onDropCandidate, onCancelPosition, onSaveDoc, onUpdateDistribution, onUpdateShortlist, onAddDoc, onRemoveDoc, onUpdateAttachments, onCancelStepDoc, onCreateProbationRound, onSendProbationToEmployee, onHrSignProbationRound }) {
+    function Detail({ c, onClose, onAdvance, onToggleDoc, onUploadFile, onStartApproval, onSendSelfServiceLink, onMilestoneEval, onSetName, onDropCandidate, onCancelPosition, onSaveDoc, onUpdateDistribution, onUpdateShortlist, onAddDoc, onRemoveDoc, onUpdateAttachments, onCancelStepDoc, onCreateProbationRound, onSendProbationToEmployee, onHrSignProbationRound }) {
       const status = deriveStatus(c);
       const documents = c.documents?.length ? c.documents : DOCUMENT_TEMPLATE.map(d => ({ ...d, received:false, receivedDate:null }));
       const probation = c.probation ?? {};
@@ -3857,9 +3857,6 @@ ${HR_EMAIL}`;
                             {c.current_step === 5 ? 'ส่ง Offer & ต่อ →' : 'ผ่าน Step →'}
                           </button>
                         )}
-                        {current && c.current_step === TOTAL_STEPS && c.status === 'active' && daysInProbation >= PROBATION_ELIGIBLE && (
-                          <button onClick={onProbationPassed} className="text-xs bg-emerald-600 hover:bg-emerald-700 text-white px-2.5 py-1 rounded-lg whitespace-nowrap ibtn">ผ่านโปร ✓</button>
-                        )}
                       </div>
                     </div>
                     {/* Step 3 (Screening): unified per-candidate cards (upload + send + timeline) */}
@@ -3925,12 +3922,7 @@ ${HR_EMAIL}`;
                   <Info icon="📤" label="ส่งฟอร์มประเมิน" value={fmtDate(probation.evaluationSentDate)} />
                   <Info icon="📥" label="รับเอกสารคืน" value={probation.returnDate ? fmtDate(probation.returnDate) : 'ยังไม่ได้รับ'} />
                 </div>
-                {c.status === 'active' && daysInProbation >= PROBATION_ELIGIBLE && (
-                  <button onClick={onProbationPassed} className="mt-4 w-full inline-flex items-center justify-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium py-2.5 rounded-lg ibtn">
-                    ✓ บันทึก "ผ่านโปร"
-                  </button>
-                )}
-                <div className="mt-3 text-[11px] text-slate-500">💡 milestone อัพเดทอัตโนมัติตามวันที่ · ผลการประเมินรายช่วงให้กรอกในเอกสาร Probation Evaluation Form ด้านล่าง</div>
+                <div className="mt-3 text-[11px] text-slate-500">💡 milestone อัพเดทอัตโนมัติตามวันที่ · ผลผ่าน/ไม่ผ่านมาจากการประเมินราย-รอบด้านล่าง (HR ลงนามปิดรอบ) — ไม่มีปุ่มผ่านโปรลัดแล้ว</div>
               </div>
 
               {/* Per-round probation evaluation (Day 30/60/90) — admin creates 1 doc per round */}
@@ -4539,16 +4531,8 @@ ${HR_EMAIL}`;
           return { ...x, documents:docs };
         });
       }
-      function markProbationPassed(c) {
-        patchCandidate(c.id, x => ({
-          ...x,
-          probation: { ...(x.probation ?? {}), returnDate:today(), passed:true,
-            milestones: { ...(x.probation?.milestones ?? {}), day120:{done:true, date:today(), score:9, note:'ผ่านโปร'} } },
-          steps: [...(x.steps ?? []), { step:TOTAL_STEPS, completedDate:today(), completedBy:user.name }],
-          status: 'passed'
-        }));
-        showToast(`🎉 ${c.name} ผ่านโปรแล้ว · ส่งต่อ Database HRIS`, 'success');
-      }
+      // (removed) markProbationPassed — probation pass/fail now comes ONLY from the
+      // per-round evaluation + HR sign-off (hrSignProbationRound). No manual shortcut.
       function uploadFile(c, file) {
         patchCandidate(c.id, x => ({ ...x, files:[...(x.files ?? []), file] }));
         showToast(`📎 อัพโหลด ${file.name} เรียบร้อย`, 'success');
@@ -4857,7 +4841,6 @@ ${HR_EMAIL}`;
               onClose={() => setOpening(null)}
               onAdvance={() => advanceStep(opened)}
               onToggleDoc={(key) => toggleDoc(opened, key)}
-              onProbationPassed={() => markProbationPassed(opened)}
               onUploadFile={(f) => uploadFile(opened, f)}
               onStartApproval={(wf) => startApproval(opened, wf)}
               onSendSelfServiceLink={() => sendSelfServiceLink(opened)}
