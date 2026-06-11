@@ -379,6 +379,8 @@ function toRow(c) {
     function deriveStatus(c) {
       if (c.status === 'passed')    return { tone:'green',  label:'ผ่านโปร',     icon:'✓' };
       if (c.status === 'cancelled') return { tone:'gray',   label:'ยกเลิกตำแหน่ง', icon:'×' };
+      if (c.status === 'rejected' && Object.values(c.probationEvals || {}).some(r => r?.hr_signed && r.final_status === 'failed'))
+                                    return { tone:'red',    label:'ไม่ผ่านโปร',   icon:'✕' };
       if (c.status === 'rejected')  return { tone:'gray',   label:'ยกเลิก',       icon:'×' };
       // Step 1: รออนุมัติ
       if (c.current_step === 1) {
@@ -727,6 +729,51 @@ function toRow(c) {
             <div className="flex justify-end gap-2 pt-2">
               <button type="button" onClick={onClose} className="px-3 py-2 text-sm text-slate-600 hover:text-slate-900">ยกเลิก</button>
               <button type="submit" className="px-4 py-2 text-sm bg-slate-900 hover:bg-slate-800 text-white rounded-lg">Create Requisition</button>
+            </div>
+          </form>
+        </Modal>
+      );
+    }
+
+    // Add an employee straight into probation (skip recruitment Step 1–5).
+    // For staff who joined before the system existed, or who entered without
+    // going through the hiring process but still need a probation evaluation.
+    function DirectProbationForm({ onClose, onSave, departments }) {
+      const [form, setForm] = useState({ name:'', position:'', department:'', start_date: today(), notes:'' });
+      const set = (k, v) => setForm(f => ({ ...f, [k]:v }));
+      const submit = (e) => {
+        e.preventDefault();
+        if (!form.name.trim() || !form.position.trim() || !form.department.trim()) {
+          showToast('กรุณากรอก ชื่อ / ตำแหน่ง / แผนก ให้ครบ', 'warning'); return;
+        }
+        onSave(form);
+      };
+      return (
+        <Modal title="เพิ่มพนักงานเข้าประเมินทดลองงาน" subtitle="ข้ามขั้นตอนสรรหา 1–5 · เข้าสู่ Probation โดยตรง" onClose={onClose}>
+          <form onSubmit={submit} className="space-y-3">
+            <Field label="ชื่อ-นามสกุล พนักงาน" required>
+              <input className="input" value={form.name} onChange={e => set('name', e.target.value)} placeholder="เช่น สมศรี รักงาน" autoFocus />
+            </Field>
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="ตำแหน่ง" required>
+                <input className="input" value={form.position} onChange={e => set('position', e.target.value)} placeholder="เช่น Barista" />
+              </Field>
+              <Field label="แผนก" required>
+                <DepartmentSelect value={form.department} options={departments} onChange={(v) => set('department', v)} />
+              </Field>
+            </div>
+            <Field label="วันเริ่มงาน (= วันเริ่มทดลองงาน)" required>
+              <input type="date" className="input" value={form.start_date} onChange={e => set('start_date', e.target.value)} />
+            </Field>
+            <Field label="หมายเหตุ (ถ้ามี)">
+              <textarea rows={2} className="input" value={form.notes} onChange={e => set('notes', e.target.value)} placeholder="เช่น พนักงานเดิมก่อนระบบใช้งาน / เข้าตรงไม่ผ่านสรรหา" />
+            </Field>
+            <div className="bg-violet-50 border border-violet-200 rounded-lg p-3 text-xs text-violet-800">
+              🛡 พนักงานจะถูกสร้างที่ <b>Step 6 · Probation</b> ทันที — สร้างเอกสารประเมิน Day 30/60/90 ได้เลย (ไม่ต้องทำ Step 1–5)
+            </div>
+            <div className="flex justify-end gap-2 pt-2">
+              <button type="button" onClick={onClose} className="px-3 py-2 text-sm text-slate-600 hover:text-slate-900">ยกเลิก</button>
+              <button type="submit" className="px-4 py-2 text-sm bg-violet-600 hover:bg-violet-700 text-white rounded-lg ibtn">เพิ่มเข้า Probation</button>
             </div>
           </form>
         </Modal>
@@ -2993,9 +3040,9 @@ ${HR_EMAIL}`;
       const submit = (e) => {
         e.preventDefault();
         if (!allScored) { showToast(`กรุณาให้คะแนนให้ครบทุกข้อ (${allKeys.length} ข้อ)`, 'warning'); return; }
-        if (isFinal && !finalStatus) { showToast('กรุณาเลือกผลสรุปทดลองงาน (Day 90)', 'warning'); return; }
+        if (!finalStatus) { showToast('กรุณาเลือกผลสรุปทดลองงานรอบนี้', 'warning'); return; }
         if (!signature) { showToast('กรุณาลงลายเซ็นก่อนส่ง', 'warning'); return; }
-        onSave({ scores, comment, evaluator_signature: signature, ...(isFinal ? { final_status: finalStatus } : {}) });
+        onSave({ scores, comment, evaluator_signature: signature, final_status: finalStatus });
       };
       return (
         <Modal title={`ประเมินทดลองงาน · Day ${dayLabel}`} subtitle={`${candidate.name || candidate.position} · ติ๊กคะแนน + คอมเมนต์ + ลงนาม`} onClose={onClose} wide>
@@ -3041,20 +3088,19 @@ ${HR_EMAIL}`;
               <div className={`text-[10px] text-right mt-0.5 ${comment.length >= 350 ? 'text-amber-600' : 'text-slate-400'}`}>{comment.length}/350</div>
             </div>
 
-            {/* Day 90: ผลสรุป */}
-            {isFinal && (
-              <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
-                <div className="text-xs font-semibold text-amber-900 mb-2">สรุปผลทดลองงาน (Day 90) <span className="text-rose-500">*</span></div>
-                <div className="space-y-1">
-                  {PROB_FINAL_OPTIONS.map(o => (
-                    <label key={o.v} className="flex items-center gap-2 text-xs cursor-pointer">
-                      <input type="radio" name="final_status" checked={finalStatus === o.v} onChange={() => setFinalStatus(o.v)} />
-                      {o.label}
-                    </label>
-                  ))}
-                </div>
+            {/* สรุปผลทดลองงาน — ทุกรอบต้องสรุป (ไม่ผ่านได้ตั้งแต่ Day 30/60) */}
+            <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
+              <div className="text-xs font-semibold text-amber-900 mb-2">สรุปผลทดลองงานรอบนี้{isFinal ? ' (รอบสุดท้าย)' : ''} <span className="text-rose-500">*</span></div>
+              <div className="text-[10px] text-amber-700 mb-2">เลือกผลของรอบนี้ · "ไม่ผ่าน" = ปิดโปร · "ผ่าน" = บรรจุ · "ต่อ" = ไปประเมินรอบถัดไป</div>
+              <div className="space-y-1">
+                {PROB_FINAL_OPTIONS.map(o => (
+                  <label key={o.v} className="flex items-center gap-2 text-xs cursor-pointer">
+                    <input type="radio" name="final_status" checked={finalStatus === o.v} onChange={() => setFinalStatus(o.v)} />
+                    {o.label}
+                  </label>
+                ))}
               </div>
-            )}
+            </div>
 
             {/* ลายเซ็น */}
             <div className="bg-white border border-slate-200 rounded-lg p-3">
@@ -3131,27 +3177,23 @@ ${HR_EMAIL}`;
             <div className="section-bar" style={{marginTop:'12px'}}>ส่วนที่ 3 : ความคิดเห็น / ข้อเสนอแนะ</div>
             <div style={{ border:'1px solid #94a3b8', borderTop:'none', minHeight:'70px', padding:'10px', whiteSpace:'pre-wrap', fontSize:'11px' }}>{data.comment || ''}</div>
 
-            {round === 'day90' && (
-              <>
-                <div className="section-bar" style={{marginTop:'12px'}}>ส่วนที่ 4 : สรุปผลทดลองงาน</div>
-                <table className="form-table"><tbody>
-                  <tr><td className="val">
-                    <Cb checked={data.final_status === 'passed'} label="ผ่านทดลองงาน · บรรจุพนักงานประจำ" /> &nbsp;&nbsp;
-                    <Cb checked={data.final_status === 'extended'} label="ทดลองงานต่อ" /> &nbsp;&nbsp;
-                    <Cb checked={data.final_status === 'failed'} label="ไม่ผ่านทดลองงาน" />
-                    {statusLabel && <div style={{ marginTop:'6px' }}><span style={{ display:'inline-block', padding:'4px 12px', borderRadius:4, background:`${statusColor}20`, color:statusColor, fontWeight:700, fontSize:'12px' }}>{statusLabel}</span></div>}
-                  </td></tr>
-                </tbody></table>
-              </>
-            )}
+            <div className="section-bar" style={{marginTop:'12px'}}>ส่วนที่ 4 : สรุปผลทดลองงานรอบนี้{round === 'day90' ? ' (รอบสุดท้าย)' : ''}</div>
+            <table className="form-table"><tbody>
+              <tr><td className="val">
+                <Cb checked={data.final_status === 'passed'} label="ผ่านทดลองงาน · บรรจุพนักงานประจำ" /> &nbsp;&nbsp;
+                <Cb checked={data.final_status === 'extended'} label="ทดลองงานต่อ" /> &nbsp;&nbsp;
+                <Cb checked={data.final_status === 'failed'} label="ไม่ผ่านทดลองงาน" />
+                {statusLabel && <div style={{ marginTop:'6px' }}><span style={{ display:'inline-block', padding:'4px 12px', borderRadius:4, background:`${statusColor}20`, color:statusColor, fontWeight:700, fontSize:'12px' }}>{statusLabel}</span></div>}
+              </td></tr>
+            </tbody></table>
 
-            <div className="sig-grid" style={{ gridTemplateColumns:'1fr 1fr', marginTop:'14px' }}>
+            <div className="sig-grid" style={{ gridTemplateColumns:'1fr 1fr 1fr', marginTop:'14px' }}>
               <div className="sig-box" style={{ minHeight:'90px' }}>
                 <div className="sig-label">ผู้ประเมิน</div>
                 <div className="sig-label-en">Evaluator</div>
                 {data.evaluator_signature
                   ? <DigitalSignatureMark approver={{ name: data.evaluator_name, role: 'ผู้ประเมิน', signedAt: data.evaluator_signedAt || today(), ip: data.evaluator_ip || '-', signature_data: data.evaluator_signature }} />
-                  : <div className="sig-line">ลงชื่อ ...........................................</div>}
+                  : <div className="sig-line">ลงชื่อ .........................</div>}
               </div>
               <div className="sig-box" style={{ minHeight:'90px' }}>
                 <div className="sig-label">พนักงาน (รับทราบผล)</div>
@@ -3159,6 +3201,13 @@ ${HR_EMAIL}`;
                 {data.ack_signature
                   ? <DigitalSignatureMark approver={{ name: candidate.name, role: 'พนักงาน', signedAt: data.ack_signedAt || today(), ip: data.ack_ip || '-', signature_data: data.ack_signature }} />
                   : <div className="sig-line">รอพนักงานลงนามรับทราบ</div>}
+              </div>
+              <div className="sig-box" style={{ minHeight:'90px' }}>
+                <div className="sig-label">ฝ่ายทรัพยากรบุคคล</div>
+                <div className="sig-label-en">HR — รับรอง/ปิดรอบ</div>
+                {data.hr_signature
+                  ? <DigitalSignatureMark approver={{ name: data.hr_name || 'HR', role: 'ฝ่าย HR', signedAt: data.hr_signedAt || today(), ip: data.hr_ip || '-', signature_data: data.hr_signature }} />
+                  : <div className="sig-line">รอ HR ลงนามรับรอง</div>}
               </div>
             </div>
           </div>
@@ -3171,13 +3220,22 @@ ${HR_EMAIL}`;
     }
 
     // Admin: one row per round (create + assign evaluator + status)
-    function ProbRoundRow({ candidate, roundKey, day, label, ev, daysInProbation, onCreate, onViewDoc, onSendToEmployee }) {
+    function ProbRoundRow({ candidate, roundKey, day, label, ev, daysInProbation, onCreate, onViewDoc, onSendToEmployee, onHrSign }) {
       const [name, setName] = useState('');
       const [email, setEmail] = useState('');
       const [busy, setBusy] = useState(false);
       const [empName, setEmpName] = useState(candidate.name || '');
       const [empEmail, setEmpEmail] = useState('');
       const [sending, setSending] = useState(false);
+      const [hrSigOpen, setHrSigOpen] = useState(false);
+      const [hrSig, setHrSig] = useState(null);
+      const [hrBusy, setHrBusy] = useState(false);
+      const finalLabel = (PROB_FINAL_OPTIONS.find(o => o.v === ev?.final_status) || {}).label;
+      const doHrSign = async () => {
+        setHrBusy(true);
+        await onHrSign(roundKey, hrSig);
+        setHrBusy(false); setHrSigOpen(false); setHrSig(null);
+      };
       const reached = daysInProbation >= day;
       const create = async () => {
         if (!name.trim() || !email.trim()) { showToast('กรอกชื่อ + อีเมลผู้ประเมิน', 'warning'); return; }
@@ -3232,8 +3290,32 @@ ${HR_EMAIL}`;
               {ev.sent_to_employee && !ev.acknowledged && (
                 <div className="border-t border-slate-100 pt-2 text-[11px] text-amber-700">⏳ รอพนักงานรับทราบ · ส่งไปที่ <b>{ev.employee_email}</b> (อยู่ใน "งานของฉัน" ของพนักงาน)</div>
               )}
-              {ev.acknowledged && (
-                <div className="border-t border-slate-100 pt-2 text-[11px] text-emerald-700">✓ พนักงาน ({ev.employee_name || ev.employee_email}) ลงนามรับทราบแล้ว · รอบนี้เสร็จสมบูรณ์{roundKey === 'day90' ? ' · สรุปผลโปร' : ''}</div>
+
+              {/* ขั้นที่ 3: HR ลงนามรับรอง + ปิดรอบ (หลังพนักงานรับทราบ) */}
+              {ev.acknowledged && !ev.hr_signed && (
+                <div className="border-t border-slate-100 pt-2 flex items-center justify-between gap-2 flex-wrap">
+                  <div className="text-[11px] text-emerald-700">✓ พนักงาน ({ev.employee_name || ev.employee_email}) รับทราบแล้ว · ผลรอบนี้: <b>{finalLabel || '—'}</b></div>
+                  <button type="button" onClick={() => setHrSigOpen(true)} className="text-xs bg-violet-600 hover:bg-violet-700 text-white px-3 py-1.5 rounded ibtn whitespace-nowrap">✍️ ลงนาม HR + ปิดรอบ</button>
+                </div>
+              )}
+              {ev.hr_signed && (
+                <div className="border-t border-slate-100 pt-2 text-[11px] text-violet-700">✓ ปิดรอบสมบูรณ์ · ลงนามครบ 3 ฝ่าย · ผล: <b>{finalLabel || '—'}</b>{ev.final_status === 'extended' ? ' → ไปรอบถัดไป' : ev.final_status === 'passed' ? ' → บรรจุพนักงานประจำ' : ' → ปิดกระบวนการ'}</div>
+              )}
+
+              {hrSigOpen && (
+                <Modal title={`ลงนามรับรอง (HR) · Day ${day}`} subtitle={`${candidate.name || candidate.position} · ปิดรอบประเมิน`} onClose={() => setHrSigOpen(false)}>
+                  <div className="space-y-3">
+                    <div className="bg-violet-50 border border-violet-200 rounded-lg p-3 text-xs text-violet-800">
+                      ผลรอบนี้: <b>{finalLabel || '—'}</b> — ลงนามเพื่อรับรองและปิดรอบ
+                      {ev.final_status === 'passed' ? ' (ผ่านโปร · บรรจุพนักงานประจำ)' : ev.final_status === 'failed' ? ' (ไม่ผ่านโปร · ปิดกระบวนการ)' : ' (ไปประเมินรอบถัดไป)'}
+                    </div>
+                    <SignaturePad onChange={setHrSig} />
+                    <div className="flex justify-end gap-2">
+                      <button type="button" onClick={() => setHrSigOpen(false)} className="px-3 py-2 text-sm text-slate-600 hover:text-slate-900">ยกเลิก</button>
+                      <button type="button" disabled={!hrSig || hrBusy} onClick={doHrSign} className={`px-4 py-2 text-sm rounded-lg text-white ibtn ${hrSig && !hrBusy ? 'bg-violet-600 hover:bg-violet-700' : 'bg-violet-300 cursor-not-allowed'}`}>{hrBusy ? '...' : '✓ ลงนาม + ปิดรอบ'}</button>
+                    </div>
+                  </div>
+                </Modal>
               )}
             </div>
           )}
@@ -3241,7 +3323,7 @@ ${HR_EMAIL}`;
       );
     }
 
-    function ProbationRoundsPanel({ candidate, daysInProbation, onCreate, onViewDoc, onSendToEmployee }) {
+    function ProbationRoundsPanel({ candidate, daysInProbation, onCreate, onViewDoc, onSendToEmployee, onHrSign }) {
       const evals = candidate.probationEvals || {};
       const rounds = [
         { key:'day30', day:30, label:'รอบที่ 1' },
@@ -3252,7 +3334,7 @@ ${HR_EMAIL}`;
         <div className="space-y-2">
           {rounds.map(r => (
             <ProbRoundRow key={r.key} candidate={candidate} roundKey={r.key} day={r.day} label={r.label}
-              ev={evals[r.key]} daysInProbation={daysInProbation} onCreate={onCreate} onViewDoc={onViewDoc} onSendToEmployee={onSendToEmployee} />
+              ev={evals[r.key]} daysInProbation={daysInProbation} onCreate={onCreate} onViewDoc={onViewDoc} onSendToEmployee={onSendToEmployee} onHrSign={onHrSign} />
           ))}
         </div>
       );
@@ -3683,7 +3765,7 @@ ${HR_EMAIL}`;
       );
     }
 
-    function Detail({ c, onClose, onAdvance, onToggleDoc, onProbationPassed, onUploadFile, onStartApproval, onSendSelfServiceLink, onMilestoneEval, onSetName, onDropCandidate, onCancelPosition, onSaveDoc, onUpdateDistribution, onUpdateShortlist, onAddDoc, onRemoveDoc, onUpdateAttachments, onCancelStepDoc, onCreateProbationRound, onSendProbationToEmployee }) {
+    function Detail({ c, onClose, onAdvance, onToggleDoc, onProbationPassed, onUploadFile, onStartApproval, onSendSelfServiceLink, onMilestoneEval, onSetName, onDropCandidate, onCancelPosition, onSaveDoc, onUpdateDistribution, onUpdateShortlist, onAddDoc, onRemoveDoc, onUpdateAttachments, onCancelStepDoc, onCreateProbationRound, onSendProbationToEmployee, onHrSignProbationRound }) {
       const status = deriveStatus(c);
       const documents = c.documents?.length ? c.documents : DOCUMENT_TEMPLATE.map(d => ({ ...d, received:false, receivedDate:null }));
       const probation = c.probation ?? {};
@@ -3739,7 +3821,7 @@ ${HR_EMAIL}`;
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs mb-5">
             <Info icon="📅" label="วันเริ่ม Process" value={fmtDate(c.process_start_date)} />
             <Info icon="⏰" label="Deadline Step 2" value={fmtDate(addDays(c.process_start_date, STEP_2_DEADLINE_DAYS))} />
-            <Info icon="💼" label="ประเภท" value={c.type === 'replacement' ? 'ทดแทนคนลาออก' : 'อัตราใหม่'} />
+            <Info icon="💼" label="ประเภท" value={c.type === 'direct_probation' ? 'เข้าประเมินโดยตรง (ไม่ผ่านสรรหา)' : c.type === 'replacement' ? 'ทดแทนคนลาออก' : 'อัตราใหม่'} />
             <Info icon="👤" label="ผู้สร้าง" value={c.created_by || '—'} />
           </div>
 
@@ -3860,7 +3942,8 @@ ${HR_EMAIL}`;
                 <ProbationRoundsPanel candidate={c} daysInProbation={daysInProbation}
                   onCreate={(roundKey, payload) => onCreateProbationRound(roundKey, payload)}
                   onViewDoc={(roundKey) => setProbDocView(roundKey)}
-                  onSendToEmployee={(roundKey, payload) => onSendProbationToEmployee(roundKey, payload)} />
+                  onSendToEmployee={(roundKey, payload) => onSendProbationToEmployee(roundKey, payload)}
+                  onHrSign={(roundKey, sig) => onHrSignProbationRound(roundKey, sig)} />
               </div>
             </Section>
           )}
@@ -4170,7 +4253,16 @@ ${HR_EMAIL}`;
       const [open, setOpen] = useState(false);
       const [docKey, setDocKey] = useState(null); // `${id}|${rk}`
       const ROUNDS = [['day30', '30'], ['day60', '60'], ['day90', '90']];
-      const finished = (candidates || []).filter(c => c.probationEvals?.day90?.acknowledged);
+      // probation is "finished" when any round is HR-signed with a closing result
+      // (passed/failed) — can happen at Day 30/60/90, not just the last round.
+      const closingRound = (c) => {
+        for (const [rk] of ROUNDS) {
+          const r = c.probationEvals?.[rk];
+          if (r?.hr_signed && (r.final_status === 'passed' || r.final_status === 'failed')) return r;
+        }
+        return null;
+      };
+      const finished = (candidates || []).filter(c => closingRound(c));
       return (
         <div className="bg-violet-50 border border-violet-200 rounded-lg p-3 mb-3">
           <button type="button" onClick={() => setOpen(o => !o)} className="w-full flex items-center justify-between gap-2 text-left">
@@ -4179,16 +4271,16 @@ ${HR_EMAIL}`;
           </button>
           {open && (
             <div className="mt-2 space-y-1.5">
-              {finished.length === 0 && <div className="text-[11px] text-slate-400 text-center py-3">ยังไม่มีพนักงานที่ประเมินครบ Day 90</div>}
+              {finished.length === 0 && <div className="text-[11px] text-slate-400 text-center py-3">ยังไม่มีพนักงานที่ปิดผลทดลองงาน</div>}
               {finished.map(c => {
-                const fin = c.probationEvals?.day90?.final_status;
-                const passed = fin === 'passed';
+                const cr = closingRound(c);
+                const passed = cr?.final_status === 'passed';
                 return (
                   <div key={c.id} className="bg-white border border-violet-100 rounded-lg p-2.5">
                     <div className="flex items-center justify-between gap-2 flex-wrap">
                       <div className="text-xs min-w-0">
                         <div className="font-medium text-slate-800 truncate">{c.name || c.position} <span className="text-slate-400">· {c.position}{c.department ? ' · ' + c.department : ''}</span></div>
-                        <div className="text-[10px] text-slate-500">รับทราบผล Day 90: {fmtDate(c.probationEvals.day90.ack_signedAt)}</div>
+                        <div className="text-[10px] text-slate-500">ปิดผล Day {cr?.dayLabel || '—'}: {fmtDate(cr?.hr_signedAt)}</div>
                       </div>
                       <span className={`text-[10px] px-2 py-0.5 rounded-full border whitespace-nowrap ${passed ? 'bg-emerald-100 text-emerald-800 border-emerald-200' : 'bg-rose-100 text-rose-700 border-rose-200'}`}>{passed ? '✓ ผ่านโปร' : '✕ ไม่ผ่านโปร'}</span>
                     </div>
@@ -4333,6 +4425,7 @@ ${HR_EMAIL}`;
     function HRDashboard({ user, candidates, setCandidates }) {
       const [opening, setOpening] = useState(null);
       const [showAddForm, setShowAddForm] = useState(false);
+      const [showDirectProbation, setShowDirectProbation] = useState(false);
       const [filter, setFilter] = useState({ dept:'', step:'', type:'', q:'' });
       const [tab, setTab] = useState('pipeline');
       const [showUsers, setShowUsers] = useState(false);
@@ -4542,6 +4635,29 @@ ${HR_EMAIL}`;
         });
         showToast(`📨 ส่งผลประเมิน Day ${dayLabel} ให้พนักงานลงนามรับทราบแล้ว · งานอยู่ใน "งานของฉัน" ของพนักงาน`, 'email');
       }
+      // HR signs LAST (after the employee acknowledges) to certify + close the round.
+      // The round's result is applied here: failed -> close (rejected), passed -> close
+      // (passed/permanent), extended -> continue to the next round. Works at ANY round.
+      async function hrSignProbationRound(c, roundKey, signature) {
+        if (!signature) { showToast('กรุณาลงลายเซ็น HR ก่อน', 'warning'); return; }
+        const ip = await getClientIp();
+        patchCandidate(c.id, x => {
+          const pe = { ...(x.probationEvals ?? {}) };
+          const r = pe[roundKey];
+          if (!r?.acknowledged) return x;   // guard: only after employee acknowledged
+          pe[roundKey] = { ...r, hr_signature: signature, hr_signedAt: new Date().toISOString(), hr_ip: ip, hr_name: user.name, hr_signed: true };
+          let status = x.status;
+          if (r.final_status === 'passed') status = 'passed';
+          else if (r.final_status === 'failed') status = 'rejected';
+          // 'extended' -> keep going to the next round (no status change)
+          return { ...x, probationEvals: pe, status };
+        });
+        const fin = c.probationEvals?.[roundKey]?.final_status;
+        showToast(
+          fin === 'passed' ? '✓ HR รับรอง · ผ่านโปร บรรจุพนักงานประจำ · ปิดกระบวนการ'
+          : fin === 'failed' ? '✓ HR รับรอง · ไม่ผ่านโปร · ปิดกระบวนการ'
+          : '✓ HR รับรอง · ปิดรอบนี้ · ไปประเมินรอบถัดไป', 'success');
+      }
       async function saveGeneratedDoc(c, step, data, approvers) {
         const docInfo = DOC_LABELS[step];
         const willAssign = approvers?.length && APPROVAL_STEPS.includes(step) && approvers.every(a => a.name && a.email);
@@ -4607,6 +4723,31 @@ ${HR_EMAIL}`;
           })
           .catch(err => showToast('เพิ่มไม่สำเร็จ: ' + (err?.message || ''), 'warning'));
       }
+      // Create an employee directly in probation (Step 6) — no recruitment steps.
+      function addDirectProbationEmployee(form) {
+        const newC = {
+          name: form.name.trim(),
+          position: form.position.trim(),
+          department: form.department.trim(),
+          type: 'direct_probation',
+          process_start_date: form.start_date,
+          current_step: TOTAL_STEPS,
+          status: 'active',
+          steps: [],
+          documents: [],
+          probation: { startDate: form.start_date, direct: true },
+          files: [],
+          notes: form.notes?.trim() || null,
+          created_by: user.name,
+        };
+        createCandidate(toRow(newC))
+          .then(row => {
+            setCandidates(prev => [fromRow(row), ...prev]);
+            setShowDirectProbation(false);
+            showToast(`เพิ่ม ${form.name} เข้าสู่ Probation แล้ว · สร้างเอกสารประเมินได้เลย`, 'success');
+          })
+          .catch(err => showToast('เพิ่มไม่สำเร็จ: ' + (err?.message || ''), 'warning'));
+      }
 
       return (
         <div className="min-h-screen">
@@ -4624,6 +4765,9 @@ ${HR_EMAIL}`;
                 <span className="hidden sm:inline-flex items-center gap-1 bg-emerald-50 text-emerald-700 px-2 py-1 rounded-lg border border-emerald-200">
                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span> {user.name}
                 </span>
+                <button onClick={() => setShowDirectProbation(true)} className="inline-flex items-center gap-1.5 bg-violet-600 hover:bg-violet-700 text-white text-sm font-medium px-3 py-2 rounded-lg ibtn" title="เพิ่มพนักงานเข้าประเมินทดลองงานโดยตรง (ไม่ผ่านสรรหา)">
+                  🛡 <span className="hidden sm:inline">เข้าประเมินทดลองงาน</span>
+                </button>
                 <button onClick={() => setShowAddForm(true)} className="inline-flex items-center gap-1.5 bg-slate-900 hover:bg-slate-800 text-white text-sm font-medium px-3 py-2 rounded-lg ibtn">
                   <span className="text-base leading-none">+</span> New Requisition
                 </button>
@@ -4728,6 +4872,7 @@ ${HR_EMAIL}`;
               onRemoveDoc={(key) => removeDocItem(opened, key)}
               onCreateProbationRound={(roundKey, payload) => createProbationRound(opened, roundKey, payload)}
               onSendProbationToEmployee={(roundKey, payload) => sendProbationToEmployee(opened, roundKey, payload)}
+              onHrSignProbationRound={(roundKey, sig) => hrSignProbationRound(opened, roundKey, sig)}
             />
           )}
 
@@ -4735,6 +4880,14 @@ ${HR_EMAIL}`;
             <CandidateAddForm
               onClose={() => setShowAddForm(false)}
               onSave={addCandidate}
+              departments={departments.length ? departments : ['Operations','Marketing','Sales & BD','Supply Chain','Finance','HR & People','IT','R&D / Product']}
+            />
+          )}
+
+          {showDirectProbation && (
+            <DirectProbationForm
+              onClose={() => setShowDirectProbation(false)}
+              onSave={addDirectProbationEmployee}
               departments={departments.length ? departments : ['Operations','Marketing','Sales & BD','Supply Chain','Finance','HR & People','IT','R&D / Product']}
             />
           )}
@@ -4964,14 +5117,9 @@ ${HR_EMAIL}`;
         patchCandidate(task.candidateId, x => {
           const pe = { ...(x.probationEvals || {}) };
           pe[rk] = { ...(pe[rk] || {}), ack_signature: signature, ack_signedAt: new Date().toISOString(), ack_ip: ip, acknowledged: true };
-          // Day 90 acknowledged -> finalize probation status
-          let status = x.status;
-          if (rk === 'day90' && pe.day90?.final_status) {
-            status = pe.day90.final_status === 'passed' ? 'passed' : pe.day90.final_status === 'failed' ? 'rejected' : x.status;
-          }
-          return { ...x, probationEvals: pe, status };
+          return { ...x, probationEvals: pe };
         });
-        showToast('✓ ลงนามรับทราบผลประเมินแล้ว', 'success');
+        showToast('✓ ลงนามรับทราบแล้ว · รอ HR ลงนามรับรองปิดรอบ', 'success');
         backToList();
       }
 
