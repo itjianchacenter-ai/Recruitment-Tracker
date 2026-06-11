@@ -66,14 +66,14 @@ serve(async (req) => {
     // AuthZ: require a logged-in (non-anon) user. Without this, anyone holding
     // the public anon key (it ships in the browser bundle) could make this
     // function send mail from the company HR mailbox = open relay / spoofing.
-    const token = (req.headers.get('Authorization') ?? '').replace(/^Bearer\s+/i, '');
-    if (!token) {
+    const authToken = (req.headers.get('Authorization') ?? '').replace(/^Bearer\s+/i, '');
+    if (!authToken) {
       return new Response(JSON.stringify({ error: 'unauthorized (no token)' }), {
         status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
     const caller = createClient(SUPABASE_URL, ANON_KEY, {
-      global: { headers: { Authorization: `Bearer ${token}` } },
+      global: { headers: { Authorization: `Bearer ${authToken}` } },
     });
     const { data: { user }, error: uErr } = await caller.auth.getUser();
     if (uErr || !user) {

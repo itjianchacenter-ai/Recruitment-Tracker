@@ -1,12 +1,17 @@
 # Low-RAM trim for the 1GB jchr-global droplet.
 # Goal: run ONLY the core Supabase services the Recruitment app needs, and
-# drop the heavy ones (studio/analytics/vector/supavisor/functions/imgproxy).
+# drop the heavy ones (studio/analytics/vector/supavisor/imgproxy).
+#
+# NOTE (2026-06-11): `functions` (edge-runtime) IS now run — the app needs it
+# for admin-users (in-app user management) + send-email + client-ip. To make
+# room on 1GB we stopped `meta` (postgres-meta — only Studio uses it, which we
+# don't run):  docker stop supabase-meta
 #
 # Strategy:
 #  - !reset / !override rewrite the inherited depends_on so kept services no
 #    longer wait on analytics/vector (which we never start).
 #  - Start only the named services:  docker compose up -d db db-config kong \
-#        auth rest realtime storage meta
+#        auth rest realtime storage functions
 #    (un-named services are never created.)
 #  - mem_limit caps each container so a spike is OOM-killed inside its cgroup
 #    instead of taking down the co-hosted jchr production app.
@@ -49,3 +54,7 @@ services:
       db:
         condition: service_healthy
     mem_limit: 110m
+  # Edge Functions runtime — serves admin-users / send-email / client-ip from
+  # ./volumes/functions. Capped so a spike is OOM-killed in-cgroup, not host-wide.
+  functions:
+    mem_limit: 200m

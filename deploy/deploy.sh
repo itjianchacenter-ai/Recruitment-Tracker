@@ -25,7 +25,24 @@ cp -r dist "$WEB_DIR/dist"
 # publish ต้นแบบกดได้ให้ทีมลอง (sandbox · ไม่ต้อง login)
 cp preview.html "$WEB_DIR/dist/preview.html"
 
-echo "==> [3/3] reload Caddy"
+# dist/ เป็น prebuilt ที่ build จากเครื่อง dev (RAM พอ) แล้ว commit เข้า git
+echo "==> [3/4] sync Edge Functions -> self-hosted edge-runtime volume"
+# Functions รันบน self-hosted Supabase (supabase-edge-functions) อ่านโค้ดจาก
+# volumes/functions. คัดลอกจาก repo แล้ว restart ให้ compile ใหม่ (idempotent ·
+# ข้ามเงียบ ๆ ถ้าไม่ได้ใช้ self-host บนเครื่องนี้)
+FN_SRC="$APP_DIR/supabase/functions"
+FN_DST="/opt/supabase-selfhost/docker/volumes/functions"
+if [ -d "$FN_SRC" ] && [ -d "$FN_DST" ]; then
+  for fn in admin-users send-email client-ip; do
+    [ -d "$FN_SRC/$fn" ] && cp -rf "$FN_SRC/$fn" "$FN_DST/"
+  done
+  docker restart supabase-edge-functions >/dev/null 2>&1 || true
+  echo "    functions synced + edge-runtime restarted"
+else
+  echo "    (no self-host edge-runtime here — skipped)"
+fi
+
+echo "==> [4/4] reload Caddy"
 # เครื่องนี้ใช้ Caddy (ไม่ใช่ nginx). Caddyfile: /etc/caddy/Caddyfile
 # caddy อาจไม่อยู่ใน PATH ใต้ `sudo bash` → resolve ก่อน
 CADDY_BIN="$(command -v caddy || echo /usr/bin/caddy)"
