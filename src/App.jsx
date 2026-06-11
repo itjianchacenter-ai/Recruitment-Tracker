@@ -1534,7 +1534,7 @@ ${HR_EMAIL}`;
           {editing && step === 1 && <ManpowerRequestForm initial={doc?.data} candidate={candidate} user={user} onClose={() => setEditing(false)} onSave={(data, approvers) => { onSave(step, data, approvers); setEditing(false); }} />}
           {editing && step === 4 && <ScorecardForm        initial={doc?.data} candidate={candidate} user={user} onClose={() => setEditing(false)} onSave={(data) => { onSave(step, data); setEditing(false); }} />}
           {editing && step === 5 && <ApprovalForm         initial={doc?.data} candidate={candidate} user={user} onClose={() => setEditing(false)} onSave={(data, approvers) => { onSave(step, data, approvers); setEditing(false); }} />}
-          {editing && step === 6 && <ProbationEvalRequestForm initial={doc?.data} candidate={candidate} user={user} onClose={() => setEditing(false)} onSave={(data) => { onSave(step, data); setEditing(false); }} />}
+          {/* step 6 (probation) ใช้ระบบราย-รอบใน Probation Section · ไม่มีฟอร์มรวมแล้ว */}
           {previewing && doc && <DocumentPreview step={step} doc={doc} candidate={candidate} onClose={() => setPreviewing(false)} />}
         </div>
       );
@@ -3171,10 +3171,13 @@ ${HR_EMAIL}`;
     }
 
     // Admin: one row per round (create + assign evaluator + status)
-    function ProbRoundRow({ candidate, roundKey, day, label, ev, daysInProbation, onCreate, onViewDoc }) {
+    function ProbRoundRow({ candidate, roundKey, day, label, ev, daysInProbation, onCreate, onViewDoc, onSendToEmployee }) {
       const [name, setName] = useState('');
       const [email, setEmail] = useState('');
       const [busy, setBusy] = useState(false);
+      const [empName, setEmpName] = useState(candidate.name || '');
+      const [empEmail, setEmpEmail] = useState('');
+      const [sending, setSending] = useState(false);
       const reached = daysInProbation >= day;
       const create = async () => {
         if (!name.trim() || !email.trim()) { showToast('กรอกชื่อ + อีเมลผู้ประเมิน', 'warning'); return; }
@@ -3184,6 +3187,12 @@ ${HR_EMAIL}`;
         onCreate(roundKey, { dayLabel: String(day), createdAt: new Date().toISOString(), evaluator_name: name.trim(), evaluator_email: email.trim(), scores: {}, comment: '', evaluated: false });
         setBusy(false);
         showToast(`สร้างเอกสารประเมิน Day ${day} + มอบหมาย ${name} แล้ว · งานอยู่ใน "งานของฉัน" ของผู้ประเมิน`, 'email');
+      };
+      const sendToEmp = async () => {
+        if (!empEmail.trim()) { showToast('กรอกอีเมลพนักงาน (= username เข้าระบบ)', 'warning'); return; }
+        setSending(true);
+        await onSendToEmployee(roundKey, { employee_email: empEmail.trim(), employee_name: empName.trim() });
+        setSending(false);
       };
       return (
         <div className="border border-slate-200 rounded-lg p-3 bg-white">
@@ -3198,21 +3207,41 @@ ${HR_EMAIL}`;
               <button type="button" onClick={create} disabled={busy} className="text-xs bg-violet-600 hover:bg-violet-700 disabled:opacity-60 text-white px-3 py-2 rounded ibtn whitespace-nowrap">{busy ? '...' : 'สร้าง + มอบหมาย'}</button>
             </div>
           ) : (
-            <div className="flex items-center justify-between gap-2 flex-wrap">
-              <div className="text-xs text-slate-600">ผู้ประเมิน: <b>{ev.evaluator_name}</b> · {ev.evaluator_email}</div>
-              <div className="flex items-center gap-2">
-                {ev.evaluated
-                  ? <span className="text-[11px] px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-200">✓ ประเมินแล้ว</span>
-                  : <span className="text-[11px] px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-200">⏳ รอผู้ประเมิน</span>}
-                {ev.evaluated && <button type="button" onClick={() => onViewDoc(roundKey)} className="text-xs bg-slate-100 hover:bg-slate-200 px-2.5 py-1 rounded">📄 ดูเอกสาร</button>}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <div className="text-xs text-slate-600">ผู้ประเมิน: <b>{ev.evaluator_name}</b> · {ev.evaluator_email}</div>
+                <div className="flex items-center gap-2">
+                  {ev.evaluated
+                    ? <span className="text-[11px] px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-200">✓ ประเมินแล้ว</span>
+                    : <span className="text-[11px] px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-200">⏳ รอผู้ประเมิน</span>}
+                  {ev.evaluated && <button type="button" onClick={() => onViewDoc(roundKey)} className="text-xs bg-slate-100 hover:bg-slate-200 px-2.5 py-1 rounded">📄 ดูเอกสาร</button>}
+                </div>
               </div>
+
+              {/* ขั้นที่ 2: ส่งผลให้พนักงานลงนามรับทราบ (เปิดหลังผู้ประเมินส่งกลับ) */}
+              {ev.evaluated && !ev.sent_to_employee && (
+                <div className="border-t border-slate-100 pt-2">
+                  <div className="text-[11px] text-slate-500 mb-1">📨 ส่งผลให้พนักงานลงนามรับทราบ (อีเมล = username เข้าระบบ)</div>
+                  <div className="grid items-center gap-2" style={{ gridTemplateColumns:'1fr 1fr auto' }}>
+                    <input className="input text-xs" placeholder="ชื่อพนักงาน" value={empName} onChange={e => setEmpName(e.target.value)} />
+                    <input className="input text-xs" placeholder="อีเมลพนักงาน" value={empEmail} onChange={e => setEmpEmail(e.target.value)} />
+                    <button type="button" onClick={sendToEmp} disabled={sending} className="text-xs bg-sky-600 hover:bg-sky-700 disabled:opacity-60 text-white px-3 py-2 rounded ibtn whitespace-nowrap">{sending ? '...' : 'ส่งให้พนักงาน'}</button>
+                  </div>
+                </div>
+              )}
+              {ev.sent_to_employee && !ev.acknowledged && (
+                <div className="border-t border-slate-100 pt-2 text-[11px] text-amber-700">⏳ รอพนักงานรับทราบ · ส่งไปที่ <b>{ev.employee_email}</b> (อยู่ใน "งานของฉัน" ของพนักงาน)</div>
+              )}
+              {ev.acknowledged && (
+                <div className="border-t border-slate-100 pt-2 text-[11px] text-emerald-700">✓ พนักงาน ({ev.employee_name || ev.employee_email}) ลงนามรับทราบแล้ว · รอบนี้เสร็จสมบูรณ์{roundKey === 'day90' ? ' · สรุปผลโปร' : ''}</div>
+              )}
             </div>
           )}
         </div>
       );
     }
 
-    function ProbationRoundsPanel({ candidate, daysInProbation, onCreate, onViewDoc }) {
+    function ProbationRoundsPanel({ candidate, daysInProbation, onCreate, onViewDoc, onSendToEmployee }) {
       const evals = candidate.probationEvals || {};
       const rounds = [
         { key:'day30', day:30, label:'รอบที่ 1' },
@@ -3223,7 +3252,7 @@ ${HR_EMAIL}`;
         <div className="space-y-2">
           {rounds.map(r => (
             <ProbRoundRow key={r.key} candidate={candidate} roundKey={r.key} day={r.day} label={r.label}
-              ev={evals[r.key]} daysInProbation={daysInProbation} onCreate={onCreate} onViewDoc={onViewDoc} />
+              ev={evals[r.key]} daysInProbation={daysInProbation} onCreate={onCreate} onViewDoc={onViewDoc} onSendToEmployee={onSendToEmployee} />
           ))}
         </div>
       );
@@ -3654,7 +3683,7 @@ ${HR_EMAIL}`;
       );
     }
 
-    function Detail({ c, onClose, onAdvance, onToggleDoc, onProbationPassed, onUploadFile, onStartApproval, onSendSelfServiceLink, onMilestoneEval, onSetName, onDropCandidate, onCancelPosition, onSaveDoc, onUpdateDistribution, onUpdateShortlist, onAddDoc, onRemoveDoc, onUpdateAttachments, onCancelStepDoc, onCreateProbationRound }) {
+    function Detail({ c, onClose, onAdvance, onToggleDoc, onProbationPassed, onUploadFile, onStartApproval, onSendSelfServiceLink, onMilestoneEval, onSetName, onDropCandidate, onCancelPosition, onSaveDoc, onUpdateDistribution, onUpdateShortlist, onAddDoc, onRemoveDoc, onUpdateAttachments, onCancelStepDoc, onCreateProbationRound, onSendProbationToEmployee }) {
       const status = deriveStatus(c);
       const documents = c.documents?.length ? c.documents : DOCUMENT_TEMPLATE.map(d => ({ ...d, received:false, receivedDate:null }));
       const probation = c.probation ?? {};
@@ -3830,7 +3859,8 @@ ${HR_EMAIL}`;
                 </div>
                 <ProbationRoundsPanel candidate={c} daysInProbation={daysInProbation}
                   onCreate={(roundKey, payload) => onCreateProbationRound(roundKey, payload)}
-                  onViewDoc={(roundKey) => setProbDocView(roundKey)} />
+                  onViewDoc={(roundKey) => setProbDocView(roundKey)}
+                  onSendToEmployee={(roundKey, payload) => onSendProbationToEmployee(roundKey, payload)} />
               </div>
             </Section>
           )}
@@ -4133,7 +4163,56 @@ ${HR_EMAIL}`;
     // รหัส 6 หลักที่ generate จะถูกตั้งเป็น password ของ user แล้วโชว์ครั้งเดียวให้ admin จดไปแจ้ง
     const gen6 = () => String(Math.floor(100000 + Math.random() * 900000));
 
-    function UserManager({ accounts, setAccounts, loading, error, onReload, onClose }) {
+    // Archive of employees who finished probation (Day 90 acknowledged) — kept
+    // separate from on-process candidates so the two don't mix. Sits inside the
+    // "ผู้ใช้ & รหัสผ่าน" modal, above the user list.
+    function PassedProbationPanel({ candidates }) {
+      const [open, setOpen] = useState(false);
+      const [docKey, setDocKey] = useState(null); // `${id}|${rk}`
+      const ROUNDS = [['day30', '30'], ['day60', '60'], ['day90', '90']];
+      const finished = (candidates || []).filter(c => c.probationEvals?.day90?.acknowledged);
+      return (
+        <div className="bg-violet-50 border border-violet-200 rounded-lg p-3 mb-3">
+          <button type="button" onClick={() => setOpen(o => !o)} className="w-full flex items-center justify-between gap-2 text-left">
+            <span className="text-xs font-semibold text-violet-900">🎓 พนักงานที่ผ่านโปรแล้ว ({finished.length}) <span className="font-normal text-violet-600">· เก็บแยกจากคนที่ยังประเมินอยู่</span></span>
+            <span className="text-violet-500 text-xs whitespace-nowrap">{open ? '▲ ซ่อน' : '▼ ดู'}</span>
+          </button>
+          {open && (
+            <div className="mt-2 space-y-1.5">
+              {finished.length === 0 && <div className="text-[11px] text-slate-400 text-center py-3">ยังไม่มีพนักงานที่ประเมินครบ Day 90</div>}
+              {finished.map(c => {
+                const fin = c.probationEvals?.day90?.final_status;
+                const passed = fin === 'passed';
+                return (
+                  <div key={c.id} className="bg-white border border-violet-100 rounded-lg p-2.5">
+                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                      <div className="text-xs min-w-0">
+                        <div className="font-medium text-slate-800 truncate">{c.name || c.position} <span className="text-slate-400">· {c.position}{c.department ? ' · ' + c.department : ''}</span></div>
+                        <div className="text-[10px] text-slate-500">รับทราบผล Day 90: {fmtDate(c.probationEvals.day90.ack_signedAt)}</div>
+                      </div>
+                      <span className={`text-[10px] px-2 py-0.5 rounded-full border whitespace-nowrap ${passed ? 'bg-emerald-100 text-emerald-800 border-emerald-200' : 'bg-rose-100 text-rose-700 border-rose-200'}`}>{passed ? '✓ ผ่านโปร' : '✕ ไม่ผ่านโปร'}</span>
+                    </div>
+                    <div className="flex flex-wrap gap-1 mt-1.5">
+                      {ROUNDS.map(([rk, d]) => c.probationEvals?.[rk]?.evaluated && (
+                        <button key={rk} type="button" onClick={() => setDocKey(k => k === `${c.id}|${rk}` ? null : `${c.id}|${rk}`)}
+                          className="text-[11px] bg-slate-100 hover:bg-slate-200 px-2 py-0.5 rounded ibtn">📄 เอกสาร Day {d}</button>
+                      ))}
+                    </div>
+                    {ROUNDS.map(([rk]) => docKey === `${c.id}|${rk}` && c.probationEvals?.[rk] && (
+                      <div key={rk} className="mt-2 border border-slate-200 rounded-lg p-3 bg-slate-50 overflow-x-auto">
+                        <ProbationRoundDoc data={c.probationEvals[rk]} candidate={c} round={rk} />
+                      </div>
+                    ))}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    function UserManager({ accounts, setAccounts, loading, error, onReload, onClose, candidates = [] }) {
       const [q, setQ] = useState('');
       const [revealed, setRevealed] = useState({});
       const [creating, setCreating] = useState(false);
@@ -4193,6 +4272,7 @@ ${HR_EMAIL}`;
       };
       return (
         <Modal title="👥 ผู้ใช้ & รหัสผ่าน" subtitle={`${loading ? 'กำลังโหลด…' : `มีรหัสแล้ว ${withCode}/${accounts.length} คน`} · admin สร้าง/ออก/รีเซ็ตรหัส 6 หลัก (Supabase Auth จริง)`} onClose={onClose} wide>
+          <PassedProbationPanel candidates={candidates} />
           <div className="flex items-center gap-2 mb-2">
             <input className="input flex-1" placeholder="🔍 ค้นหาชื่อ / อีเมล / แผนก" value={q} onChange={e => setQ(e.target.value)} />
             <button onClick={() => setCreating(v => !v)} disabled={busy} className="text-sm bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white px-3 py-2 rounded-lg ibtn whitespace-nowrap">+ สร้าง User</button>
@@ -4441,6 +4521,27 @@ ${HR_EMAIL}`;
           probationEvals: { ...(x.probationEvals ?? {}), [roundKey]: { ...payload } }
         }));
       }
+      // HR sends a completed round's result to the employee for acknowledgment.
+      // Lands in the employee's own "งานของฉัน" (email = login username).
+      async function sendProbationToEmployee(c, roundKey, { employee_email, employee_name }) {
+        const email = (employee_email || '').trim();
+        if (!email) { showToast('กรอกอีเมลพนักงาน (= username เข้าระบบ)', 'warning'); return; }
+        if (!(await ensureAssigneesRegistered([email], showToast))) return;
+        const dayLabel = c.probationEvals?.[roundKey]?.dayLabel || '';
+        patchCandidate(c.id, x => {
+          const pe = { ...(x.probationEvals ?? {}) };
+          if (!pe[roundKey]?.evaluated) return x;   // guard: only after evaluator submitted
+          pe[roundKey] = {
+            ...pe[roundKey],
+            sent_to_employee: true,
+            employee_email: email,
+            employee_name: (employee_name || '').trim() || x.name || '',
+            sentToEmployeeAt: new Date().toISOString(),
+          };
+          return { ...x, probationEvals: pe };
+        });
+        showToast(`📨 ส่งผลประเมิน Day ${dayLabel} ให้พนักงานลงนามรับทราบแล้ว · งานอยู่ใน "งานของฉัน" ของพนักงาน`, 'email');
+      }
       async function saveGeneratedDoc(c, step, data, approvers) {
         const docInfo = DOC_LABELS[step];
         const willAssign = approvers?.length && APPROVAL_STEPS.includes(step) && approvers.every(a => a.name && a.email);
@@ -4626,6 +4727,7 @@ ${HR_EMAIL}`;
               onAddDoc={() => addDocItem(opened)}
               onRemoveDoc={(key) => removeDocItem(opened, key)}
               onCreateProbationRound={(roundKey, payload) => createProbationRound(opened, roundKey, payload)}
+              onSendProbationToEmployee={(roundKey, payload) => sendProbationToEmployee(opened, roundKey, payload)}
             />
           )}
 
@@ -4640,6 +4742,7 @@ ${HR_EMAIL}`;
           {showUsers && (
             <UserManager accounts={accounts} setAccounts={setAccounts}
               loading={accountsLoading} error={accountsError} onReload={loadAccountsFromServer}
+              candidates={candidates}
               onClose={() => setShowUsers(false)} />
           )}
         </div>
@@ -4715,15 +4818,28 @@ ${HR_EMAIL}`;
         }
         // 4) PER-ROUND probation — evaluator fills one document per round (Day 30/60/90)
         const pevals = c.probationEvals || {};
+        const who = c.name || c.position || '';
         for (const rk of Object.keys(pevals)) {
           const ev = pevals[rk];
-          if (!ev || normalizeEmail(ev.evaluator_email) !== me) continue;
-          out.push({
-            kind: 'prob-eval', id: `${c.id}|probeval|${rk}`, candidateId: c.id, candidate: c,
-            step: 6, roundKey: rk, dayLabel: ev.dayLabel, ev,
-            state: ev.evaluated ? 'done' : 'todo',
-            title: `ประเมินทดลองงาน · Day ${ev.dayLabel}`, subject: label,
-          });
+          if (!ev) continue;
+          // Evaluator: fill in one round's evaluation
+          if (normalizeEmail(ev.evaluator_email) === me) {
+            out.push({
+              kind: 'prob-eval', id: `${c.id}|probeval|${rk}`, candidateId: c.id, candidate: c,
+              step: 6, roundKey: rk, dayLabel: ev.dayLabel, ev,
+              state: ev.evaluated ? 'done' : 'todo',
+              title: `ประเมินทดลองงาน Day ${ev.dayLabel} · ${who}`, subject: label,
+            });
+          }
+          // Employee (evaluatee): sign to acknowledge the result after HR sends it
+          if (ev.sent_to_employee && normalizeEmail(ev.employee_email) === me) {
+            out.push({
+              kind: 'prob-ack', id: `${c.id}|proback|${rk}`, candidateId: c.id, candidate: c,
+              step: 6, roundKey: rk, dayLabel: ev.dayLabel, ev,
+              state: ev.acknowledged ? 'done' : 'todo',
+              title: `รับทราบผลประเมิน Day ${ev.dayLabel} · ${who}`, subject: label,
+            });
+          }
         }
       }
       const rank = { todo: 0, waiting: 1, rejected: 2, done: 3 };
