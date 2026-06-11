@@ -1979,6 +1979,140 @@ ${HR_EMAIL}`;
       );
     }
 
+    // ===== Evaluator side: full interview scorecard (filled in "งานของฉัน") =====
+    // HR seeds section 1; the assigned evaluator scores the 14 criteria, writes
+    // the summary/goals/conclusion, fills interviewer info AND signs.
+    function ScorecardEvalForm({ initial, candidate, user, onClose, onSave }) {
+      const allKeys = EVAL_CRITERIA.flatMap(c => c.items.map(i => i.key));
+      const blankScores = Object.fromEntries(allKeys.map(k => [k, 0]));
+      const seed = initial ?? {};
+      const [form, setForm] = useState({
+        candidate_name: seed.candidate_name ?? candidate.name ?? '',
+        interview_date: seed.interview_date ?? today(),
+        level: seed.level ?? 'JG5',
+        division: seed.division ?? candidate.department,
+        edu_match: seed.edu_match ?? 'match',
+        exp_match: seed.exp_match ?? 'match',
+        job_change: seed.job_change ?? 'stable',
+        residence: seed.residence ?? 'near',
+        scores: seed.scores ?? blankScores,
+        summary: seed.summary ?? '',
+        probation_goals: seed.probation_goals ?? '',
+        conclusion: seed.conclusion ?? '',
+        conclusion_other_position: seed.conclusion_other_position ?? '',
+        interviewer_name: seed.interviewer_name ?? user?.name ?? '',
+        interviewer_position: seed.interviewer_position ?? '',
+        interviewer_division: seed.interviewer_division ?? '',
+        signature_data: seed.signature_data ?? null,
+      });
+      const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+      const setScore = (k, v) => setForm(f => ({ ...f, scores: { ...f.scores, [k]: v } }));
+      const allScored = allKeys.every(k => (form.scores[k] ?? 0) >= 1);
+      const CONCLUSIONS = [
+        { v:'hire', label:'สมควรจ้าง' },
+        { v:'hold', label:'ไม่เหมาะสมในขณะนี้ · เก็บข้อมูลไว้พิจารณาต่อไป' },
+        { v:'interview_again', label:'เห็นควรให้สัมภาษณ์อีกครั้ง' },
+        { v:'no', label:'ไม่เหมาะสม' },
+        { v:'other_position', label:'เหมาะสมสำหรับตำแหน่งอื่น' },
+      ];
+      const submit = (e) => {
+        e.preventDefault();
+        if (!allScored) { showToast('กรุณาให้คะแนนให้ครบทุกหัวข้อ (14 ข้อ)', 'warning'); return; }
+        if (!form.conclusion) { showToast('กรุณาเลือกข้อสรุป (ส่วนที่ 6)', 'warning'); return; }
+        if (!form.interviewer_name.trim()) { showToast('กรุณากรอกชื่อผู้ประเมิน', 'warning'); return; }
+        if (!form.signature_data) { showToast('กรุณาลงลายเซ็นก่อนส่ง', 'warning'); return; }
+        onSave(form);
+      };
+      const scoredCount = allKeys.filter(k => (form.scores[k] ?? 0) >= 1).length;
+      return (
+        <Modal title="แบบประเมินการสัมภาษณ์ · ผู้ประเมินกรอก" subtitle={`${candidate.name || candidate.position} · ให้คะแนน + สรุป + ลงนาม`} onClose={onClose} wide>
+          <form onSubmit={submit} className="space-y-3">
+            {/* ส่วนที่ 1 */}
+            <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 space-y-2">
+              <div className="text-xs font-semibold text-slate-700">ส่วนที่ 1 : ข้อมูลผู้สมัคร</div>
+              <Field label="ชื่อ-นามสกุล"><input className="input" value={form.candidate_name} onChange={e => set('candidate_name', e.target.value)} /></Field>
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="วันที่สัมภาษณ์"><input type="date" className="input" value={form.interview_date} onChange={e => set('interview_date', e.target.value)} /></Field>
+                <Field label="ฝ่าย"><input className="input" value={form.division} onChange={e => set('division', e.target.value)} /></Field>
+              </div>
+            </div>
+
+            {/* ส่วนที่ 3 : ให้คะแนน */}
+            <div className="bg-white border border-slate-200 rounded-lg p-3">
+              <div className="flex items-center justify-between mb-2">
+                <div className="text-xs font-semibold text-slate-700">ส่วนที่ 3 : การประเมิน <span className="font-normal text-slate-400">(5=ยอดเยี่ยม · 1=น้อยมาก)</span></div>
+                <div className={`text-[11px] ${allScored ? 'text-emerald-600' : 'text-amber-600'}`}>{scoredCount}/{allKeys.length} ข้อ</div>
+              </div>
+              {EVAL_CRITERIA.map(cat => (
+                <div key={cat.cat} className="mb-2">
+                  <div className="text-[11px] font-semibold text-slate-600 bg-slate-100 px-2 py-1 rounded">{cat.cat}</div>
+                  {cat.items.map(it => (
+                    <div key={it.key} className="flex items-center justify-between gap-2 py-1.5 border-b border-slate-100">
+                      <span className="text-xs flex-1 min-w-0">{it.label}</span>
+                      <div className="flex gap-1 shrink-0">
+                        {[5,4,3,2,1].map(n => (
+                          <button type="button" key={n} onClick={() => setScore(it.key, n)}
+                            className={`w-7 h-7 rounded text-xs font-semibold ibtn ${form.scores[it.key] === n ? 'bg-violet-600 text-white' : 'bg-white border border-slate-300 text-slate-500 hover:border-violet-400'}`}>{n}</button>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ))}
+            </div>
+
+            {/* ส่วนที่ 4 */}
+            <div>
+              <label className="text-xs font-medium text-slate-600">ส่วนที่ 4 : บทสรุปการประเมินศักยภาพ</label>
+              <textarea rows={2} className="input mt-1" value={form.summary} onChange={e => set('summary', e.target.value)} placeholder="จุดแข็ง · จุดที่ต้องพัฒนา · ความเหมาะสมโดยรวม" />
+            </div>
+            {/* ส่วนที่ 5 */}
+            <div>
+              <label className="text-xs font-medium text-slate-600">ส่วนที่ 5 : เป้าหมายช่วงทดลองงาน</label>
+              <textarea rows={2} className="input mt-1" value={form.probation_goals} onChange={e => set('probation_goals', e.target.value)} placeholder="เป้าหมาย/ตัวชี้วัดที่คาดหวังในช่วงทดลองงาน" />
+            </div>
+
+            {/* ส่วนที่ 6 : ข้อสรุป */}
+            <div className="bg-slate-50 border border-slate-200 rounded-lg p-3">
+              <div className="text-xs font-semibold text-slate-700 mb-2">ส่วนที่ 6 : ข้อสรุป</div>
+              <div className="space-y-1">
+                {CONCLUSIONS.map(c => (
+                  <label key={c.v} className="flex items-center gap-2 text-xs cursor-pointer">
+                    <input type="radio" name="conclusion" checked={form.conclusion === c.v} onChange={() => set('conclusion', c.v)} />
+                    {c.label}
+                  </label>
+                ))}
+              </div>
+              {form.conclusion === 'other_position' && (
+                <input className="input mt-2" value={form.conclusion_other_position} onChange={e => set('conclusion_other_position', e.target.value)} placeholder="ระบุตำแหน่งที่เหมาะสม" />
+              )}
+            </div>
+
+            {/* ผู้ประเมิน */}
+            <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 space-y-2">
+              <div className="text-xs font-semibold text-slate-700">ผู้สัมภาษณ์ / ผู้ประเมิน</div>
+              <div className="grid grid-cols-3 gap-2">
+                <Field label="ชื่อ" required><input className="input" value={form.interviewer_name} onChange={e => set('interviewer_name', e.target.value)} /></Field>
+                <Field label="ตำแหน่ง"><input className="input" value={form.interviewer_position} onChange={e => set('interviewer_position', e.target.value)} /></Field>
+                <Field label="ฝ่าย"><input className="input" value={form.interviewer_division} onChange={e => set('interviewer_division', e.target.value)} /></Field>
+              </div>
+            </div>
+
+            {/* ลายเซ็น */}
+            <div className="bg-white border border-slate-200 rounded-lg p-3">
+              <div className="text-xs font-semibold text-slate-700 mb-2">✍️ ลายเซ็นผู้ประเมิน <span className="font-normal text-rose-500">*จำเป็น</span></div>
+              <SignaturePad onChange={(d) => set('signature_data', d)} />
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2">
+              <button type="button" onClick={onClose} className="px-3 py-2 text-sm text-slate-600 hover:text-slate-900">ยกเลิก</button>
+              <button type="submit" className="px-4 py-2 text-sm bg-violet-600 hover:bg-violet-700 text-white rounded-lg ibtn">✓ ส่งผลประเมิน + ลงนาม</button>
+            </div>
+          </form>
+        </Modal>
+      );
+    }
+
     function ScorecardDoc({ data, candidate }) {
       const levelObj = LEVELS.find(l => l.code === data.level) ?? { code:data.level, label:'' };
       return (
@@ -2089,6 +2223,17 @@ ${HR_EMAIL}`;
               </tr>
             </tbody>
           </table>
+
+          {/* Evaluator digital signature (captured when filling in "งานของฉัน") */}
+          <div className="sig-grid" style={{ gridTemplateColumns:'1fr', marginTop:'14px' }}>
+            <div className="sig-box" style={{ minHeight:'90px' }}>
+              <div className="sig-label">ผู้ประเมิน / ผู้สัมภาษณ์</div>
+              <div className="sig-label-en">Evaluator</div>
+              {data.signature_data
+                ? <DigitalSignatureMark approver={{ name: data.interviewer_name, role: data.interviewer_position, signedAt: data.signedAt || today(), ip: data.signature_ip || '-', signature_data: data.signature_data }} />
+                : <div className="sig-line">ลงชื่อ ...........................................<br />({data.interviewer_name || '..............................'})</div>}
+            </div>
+          </div>
 
           <div style={{ fontSize:'9px', color:'#94a3b8', marginTop:'12px', textAlign:'center' }}>
             สร้างโดยระบบ Recruitment 120 Days · JIANCHA GROUP · {fmtDate(today())}
@@ -4306,15 +4451,17 @@ ${HR_EMAIL}`;
         backToList();
       }
 
-      function saveScorecard(task, data) {
+      async function saveScorecard(task, data) {
+        const ip = await getClientIp();   // stamp the evaluator's signature for audit
+        const stamped = { ...data, signedAt: new Date().toISOString(), signature_ip: ip };
         patchCandidate(task.candidateId, x => {
           const gd = { ...(x.generatedDocs || {}) };
-          gd[4] = { docName: gd[4]?.docName || 'interview-evaluation.pdf', data, createdAt: new Date().toISOString(), createdBy: myName };
+          gd[4] = { docName: gd[4]?.docName || 'interview-evaluation.pdf', data: stamped, createdAt: new Date().toISOString(), createdBy: myName };
           const dists = { ...(x.distributions || {}) };
           dists[4] = (dists[4] || []).map(e => e.id === task.entry.id ? { ...e, done: true, completedAt: new Date().toISOString() } : e);
           return { ...x, generatedDocs: gd, distributions: dists };
         });
-        showToast('✓ ส่งผลประเมินกลับ HR แล้ว', 'success');
+        showToast('✓ ส่งผลประเมิน + ลงนามกลับ HR แล้ว', 'success');
         backToList();
       }
 
@@ -4519,7 +4666,7 @@ ${HR_EMAIL}`;
                     : <button onClick={() => setShowForm(true)} className="bg-violet-600 hover:bg-violet-700 text-white px-6 py-3 rounded-xl font-medium text-sm ibtn">📝 เปิดฟอร์มประเมิน</button>}
                 </div>
                 {showForm && (
-                  <ScorecardForm initial={c.generatedDocs?.[4]?.data} candidate={c} user={{ name: myName }}
+                  <ScorecardEvalForm initial={c.generatedDocs?.[4]?.data} candidate={c} user={{ name: myName }}
                     onClose={() => setShowForm(false)} onSave={(data) => saveScorecard(active, data)} />
                 )}
               </>
