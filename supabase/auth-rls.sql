@@ -31,9 +31,10 @@ create policy "auth insert candidates" on public.candidates for insert to authen
 create policy "auth update candidates" on public.candidates for update to authenticated using (true) with check (true);
 create policy "auth delete candidates" on public.candidates for delete to authenticated using (true);
 
--- 3) audit log: readable by authenticated only
+-- 3) audit log: readable by authenticated only + append-only (no update/delete)
 drop policy if exists "anon read audit" on public.candidate_audit;
 create policy "auth read audit" on public.candidate_audit for select to authenticated using (true);
+revoke update, delete on public.candidate_audit from authenticated, anon;
 
 -- 4) storage bucket "recruitment": authenticated users only (private)
 drop policy if exists "auth read recruitment"   on storage.objects;

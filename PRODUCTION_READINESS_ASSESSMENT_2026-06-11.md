@@ -5,9 +5,21 @@
 
 ---
 
-## 🚦 คำตัดสิน: แกนหลัก **GO ได้** — แต่ต้องปิด ops gap ก่อนใส่ข้อมูลพนักงานจริง
+## 🚦 คำตัดสิน: **พร้อมใช้งานจริง (internal HR)** — เหลือ email (M365) + งานก่อน go-live
 
-**คะแนนรวม: ~6.5/10** (ฉบับเดิม 4/10) · ความปลอดภัยข้อมูลหลัก (auth + RLS) **แก้แล้วจริง ยืนยันบน DB สด** · ช่องว่างที่เหลือคือ **backup off-site, edge functions, PDPA**
+### ความพร้อม ≈ **85%** (internal use) · ~78% (full compliance/IPO-grade)
+
+| มิติ | น้ำหนัก | % | สรุป |
+|---|---|---|---|
+| ฟังก์ชันหลัก (ใช้งานได้) | 30% | 96% | ทุกฟีเจอร์ทำงาน (รวม user mgmt + e-sign) · เหลือ email-send |
+| Security / Auth | 22% | 90% | RLS authenticated · authz hardened · audit immutable · ErrorBoundary |
+| Data / Audit integrity | 10% | 92% | append-only (RLS+REVOKE) · backup **restore พิสูจน์แล้ว** |
+| Reliability / Ops | 18% | 75% | backup nightly+reboot-safe · เหลือ off-site + monitoring |
+| Email (M365) | 6% | 60% | deploy+authz แล้ว · รอ secrets |
+| Testing / CI | 6% | 15% | ยังไม่มี |
+| PDPA / Compliance | 8% | 50% | ไม่มี consent/retention · แต่ 0 ข้อมูลจริง |
+
+**รวมถ่วงน้ำหนัก ≈ 85%** · แกนหลักปลอดภัย ยืนยันบน production สด · ช่องว่างที่เหลือ = email secrets, off-site backup, PDPA, tests
 
 > ⚠️ สถานะข้อมูล ณ วันประเมิน: `candidates = 0 แถวจริง` (audit 21–47 แถวจากการทดสอบ) → **ยังเป็นช่วงก่อน go-live จริง** เป็นจังหวะที่ดีที่สุดในการปิดช่องโหว่ก่อนข้อมูล PII เข้า
 
@@ -34,6 +46,9 @@
 5. **`schema.sql` ล็อก authenticated-only** — รวม `auth-rls.sql` เข้ามา → re-run schema แล้วไม่เปิด anon อีก (ปิด footgun)
 6. **ตั้ง role ของ hr01 ใน `app_metadata`** บน prod DB (เดิมอยู่แค่ `user_metadata`)
 7. **Deploy Edge Functions บน self-host** — เพิ่ม `supabase-edge-functions` (cap 200m · หยุด `meta` ที่ไม่ได้ใช้เพื่อคืน RAM) · `admin-users` + `client-ip` ทำงานเต็ม (ทดสอบ end-to-end: hr01 list users → 200) · `send-email` deploy + authz แล้ว เหลือใส่ M365 secrets · `deploy.sh` sync functions อัตโนมัติแล้ว
+8. **Audit immutable ระดับ privilege** — `revoke update, delete on candidate_audit` (เพิ่มใน schema.sql + auth-rls.sql) → ลบ/แก้ประวัติไม่ได้แม้ RLS ถูกปิด
+9. **พิสูจน์ backup restore ได้จริง** — restore dump ล่าสุดเข้า scratch DB · candidates/audit/auth.users กลับมาครบ (login รอด restore)
+10. **ยืนยัน reboot-safe** — ทุก container เป็น `restart=unless-stopped` · prod กลับมาเองหลัง reboot · `meta` คงหยุด (RAM ไม่ตึงกลับ)
 
 ---
 

@@ -126,6 +126,10 @@ drop policy if exists "auth read audit" on public.candidate_audit;
 create policy "auth read audit" on public.candidate_audit for select to authenticated using (true);
 -- Inserts into candidate_audit happen via SECURITY DEFINER trigger, so no insert
 -- policy is needed. No update/delete policy = the audit trail is append-only.
+-- Defense-in-depth: also revoke update/delete at the privilege level, so the
+-- trail stays append-only even if RLS were ever disabled. Inserts are unaffected
+-- (the trigger runs SECURITY DEFINER as the table owner).
+revoke update, delete on public.candidate_audit from authenticated, anon;
 
 -- 7. Realtime publication --------------------------------------------------
 -- Enables push updates so all HR users see changes live.
