@@ -2027,13 +2027,13 @@ ${HR_EMAIL}`;
       return (
         <Modal title="แบบประเมินการสัมภาษณ์ · ผู้ประเมินกรอก" subtitle={`${candidate.name || candidate.position} · ให้คะแนน + สรุป + ลงนาม`} onClose={onClose} wide>
           <form onSubmit={submit} className="space-y-3">
-            {/* ส่วนที่ 1 */}
+            {/* ส่วนที่ 1 — ล็อก: ข้อมูลจาก HR แก้ไขไม่ได้ */}
             <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 space-y-2">
-              <div className="text-xs font-semibold text-slate-700">ส่วนที่ 1 : ข้อมูลผู้สมัคร</div>
-              <Field label="ชื่อ-นามสกุล"><input className="input" value={form.candidate_name} onChange={e => set('candidate_name', e.target.value)} /></Field>
-              <div className="grid grid-cols-2 gap-3">
-                <Field label="วันที่สัมภาษณ์"><input type="date" className="input" value={form.interview_date} onChange={e => set('interview_date', e.target.value)} /></Field>
-                <Field label="ฝ่าย"><input className="input" value={form.division} onChange={e => set('division', e.target.value)} /></Field>
+              <div className="text-xs font-semibold text-slate-700 flex items-center gap-1">ส่วนที่ 1 : ข้อมูลผู้สมัคร <span className="text-[10px] font-normal text-slate-400">🔒 ข้อมูลจาก HR · แก้ไขไม่ได้</span></div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+                <div><div className="text-slate-500 mb-0.5">ชื่อ-นามสกุล</div><div className="font-medium text-slate-800 bg-white border border-slate-200 rounded px-2 py-1.5">{form.candidate_name || '—'}</div></div>
+                <div><div className="text-slate-500 mb-0.5">วันที่สัมภาษณ์</div><div className="font-medium text-slate-800 bg-white border border-slate-200 rounded px-2 py-1.5">{fmtDate(form.interview_date)}</div></div>
+                <div><div className="text-slate-500 mb-0.5">ฝ่าย</div><div className="font-medium text-slate-800 bg-white border border-slate-200 rounded px-2 py-1.5">{form.division || '—'}</div></div>
               </div>
             </div>
 
@@ -2064,12 +2064,14 @@ ${HR_EMAIL}`;
             {/* ส่วนที่ 4 */}
             <div>
               <label className="text-xs font-medium text-slate-600">ส่วนที่ 4 : บทสรุปการประเมินศักยภาพ</label>
-              <textarea rows={2} className="input mt-1" value={form.summary} onChange={e => set('summary', e.target.value)} placeholder="จุดแข็ง · จุดที่ต้องพัฒนา · ความเหมาะสมโดยรวม" />
+              <textarea rows={3} maxLength={350} className="input mt-1" value={form.summary} onChange={e => set('summary', e.target.value.slice(0, 350))} placeholder="จุดแข็ง · จุดที่ต้องพัฒนา · ความเหมาะสมโดยรวม" />
+              <div className={`text-[10px] text-right mt-0.5 ${form.summary.length >= 350 ? 'text-amber-600' : 'text-slate-400'}`}>{form.summary.length}/350</div>
             </div>
             {/* ส่วนที่ 5 */}
             <div>
               <label className="text-xs font-medium text-slate-600">ส่วนที่ 5 : เป้าหมายช่วงทดลองงาน</label>
-              <textarea rows={2} className="input mt-1" value={form.probation_goals} onChange={e => set('probation_goals', e.target.value)} placeholder="เป้าหมาย/ตัวชี้วัดที่คาดหวังในช่วงทดลองงาน" />
+              <textarea rows={3} maxLength={350} className="input mt-1" value={form.probation_goals} onChange={e => set('probation_goals', e.target.value.slice(0, 350))} placeholder="เป้าหมาย/ตัวชี้วัดที่คาดหวังในช่วงทดลองงาน" />
+              <div className={`text-[10px] text-right mt-0.5 ${form.probation_goals.length >= 350 ? 'text-amber-600' : 'text-slate-400'}`}>{form.probation_goals.length}/350</div>
             </div>
 
             {/* ส่วนที่ 6 : ข้อสรุป */}
@@ -2196,6 +2198,8 @@ ${HR_EMAIL}`;
             </tbody>
           </table>
 
+          {/* ===== PAGE 2 : typed sections + signature (forced page break in print) ===== */}
+          <div className="sc-page2">
           <div className="section-bar" style={{marginTop:'12px'}}>ส่วนที่ 4 : บทสรุปการประเมินศักยภาพ</div>
           <div style={{ border:'1px solid #94a3b8', borderTop:'none', minHeight:'80px', padding:'10px', whiteSpace:'pre-wrap', fontSize:'11px' }}>{data.summary || ''}</div>
 
@@ -2234,6 +2238,7 @@ ${HR_EMAIL}`;
                 : <div className="sig-line">ลงชื่อ ...........................................<br />({data.interviewer_name || '..............................'})</div>}
             </div>
           </div>
+          </div>{/* /sc-page2 */}
 
           <div style={{ fontSize:'9px', color:'#94a3b8', marginTop:'12px', textAlign:'center' }}>
             สร้างโดยระบบ Recruitment 120 Days · JIANCHA GROUP · {fmtDate(today())}

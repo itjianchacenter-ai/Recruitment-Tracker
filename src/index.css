@@ -60,6 +60,9 @@ body {
   .print-document .sig-grid,
   .print-document .sig-box { break-inside: avoid; page-break-inside: avoid; }
   .print-document .section-bar { break-after: avoid; page-break-after: avoid; }
+  /* scorecard: force the typed sections + signature onto a 2nd page so the
+     score grid stays whole on page 1 (prevents cut tables / overflow) */
+  .print-document .sc-page2 { break-before: page; page-break-before: always; }
 
   /* compress so a typical form fits one A4 page; long content (e.g. a long JD)
      overflows cleanly to a 2nd page thanks to the break-inside rules above */
