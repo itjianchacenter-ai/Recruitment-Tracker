@@ -2887,7 +2887,7 @@ ${HR_EMAIL}`;
             <div className="px-4 pt-2 pb-1 bg-amber-50 border-b border-amber-200 text-[11px] text-amber-900 no-print">
               💡 <b>PDF Preview Mode</b> · นี่คือมุมมองสำหรับพิมพ์/save PDF · ผู้ประเมินกรอกจริงผ่าน <b>interactive form</b> ในระบบ
             </div>
-            <div className="p-6 sm:p-10 print-only print-document">
+            <div className="p-6 sm:p-10 print-only">
               <Renderer data={doc.data} candidate={candidate} />
             </div>
           </div>
@@ -4406,7 +4406,7 @@ ${HR_EMAIL}`;
                 <>
                   <div className="bg-white border border-slate-200 rounded-2xl p-5 mb-4">
                     <div className="text-xs font-semibold text-slate-600 mb-2">📎 เอกสาร · {c.generatedDocs?.[active.step]?.docName || ''}</div>
-                    <div className="border border-slate-200 rounded-xl p-4 print-document">
+                    <div className="border border-slate-200 rounded-xl p-4">
                       <DocComp data={docData} candidate={c} />
                     </div>
                   </div>
@@ -4720,7 +4720,7 @@ ${HR_EMAIL}`;
                 <div className="px-4 pt-2 pb-1 bg-emerald-50 border-b border-emerald-200 text-[11px] text-emerald-900 no-print">
                   ✓ Preview จากข้อมูลที่คุณกรอก · ทดลอง flow ครบ form → doc → print
                 </div>
-                <div className="p-6 sm:p-10 print-document">
+                <div className="p-6 sm:p-10">
                   <DocComp data={preview.data} candidate={buildPreviewCandidate()} />
                 </div>
               </div>
