@@ -5765,12 +5765,12 @@ ${HR_EMAIL}`;
             <div className="space-y-3">
               <div>
                 <label className="text-xs font-medium text-slate-600">อีเมล / ชื่อผู้ใช้</label>
-                <input type="text" className="input mt-1" placeholder={HR_EMAIL} value={email}
+                <input type="text" className="input mt-1" placeholder={HR_EMAIL} value={email} autoComplete="off"
                   onChange={e => setEmail(e.target.value)} onKeyDown={e => e.key === 'Enter' && doLogin()} />
               </div>
               <div>
                 <label className="text-xs font-medium text-slate-600">รหัสผ่าน</label>
-                <input type="password" className="input mt-1" placeholder="••••••••" value={password}
+                <input type="password" className="input mt-1" placeholder="••••••••" value={password} autoComplete="new-password"
                   onChange={e => setPassword(e.target.value)} onKeyDown={e => e.key === 'Enter' && doLogin()} />
               </div>
               <button onClick={doLogin} disabled={busy}
