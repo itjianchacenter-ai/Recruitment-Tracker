@@ -3821,7 +3821,7 @@ ${HR_EMAIL}`;
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs mb-5">
             <Info icon="📅" label="วันเริ่ม Process" value={fmtDate(c.process_start_date)} />
             <Info icon="⏰" label="Deadline Step 2" value={fmtDate(addDays(c.process_start_date, STEP_2_DEADLINE_DAYS))} />
-            <Info icon="💼" label="ประเภท" value={c.type === 'direct_probation' ? 'เข้าประเมินโดยตรง (ไม่ผ่านสรรหา)' : c.type === 'replacement' ? 'ทดแทนคนลาออก' : 'อัตราใหม่'} />
+            <Info icon="💼" label="ประเภท" value={c.probation?.direct ? 'เข้าประเมินโดยตรง (ไม่ผ่านสรรหา)' : c.type === 'replacement' ? 'ทดแทนคนลาออก' : 'อัตราใหม่'} />
             <Info icon="👤" label="ผู้สร้าง" value={c.created_by || '—'} />
           </div>
 
@@ -4715,7 +4715,7 @@ ${HR_EMAIL}`;
           name: form.name.trim(),
           position: form.position.trim(),
           department: form.department.trim(),
-          type: 'direct_probation',
+          type: 'new_headcount',   // DB check allows replacement/new_headcount only; "direct" marker lives in probation.direct
           process_start_date: form.start_date,
           current_step: TOTAL_STEPS,
           status: 'active',
