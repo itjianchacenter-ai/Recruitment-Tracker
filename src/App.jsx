@@ -1165,17 +1165,6 @@ ${HR_EMAIL}`;
             {item.verdict === 'pass' && (
               <div className="text-[10px] text-emerald-700 bg-emerald-50 border border-emerald-200 rounded px-2 py-1">→ HR: ต้นสังกัดให้ผ่าน — ไปดำเนินการนัดสัมภาษณ์ Step 4 ต่อได้เลย</div>
             )}
-            <div className="pt-0.5">
-              <div className="text-[10px] text-slate-500 mb-1">บันทึกผลที่ต้นสังกัดตอบกลับ:</div>
-              <div className="flex flex-wrap gap-1.5">
-                {Object.entries(VERDICT_META).map(([key, m]) => (
-                  <button key={key} onClick={() => setVerdict(key)}
-                          className={`text-[11px] text-white px-2.5 py-1 rounded ibtn whitespace-nowrap ${m.btn} ${item.verdict === key ? 'ring-2 ring-offset-1 ring-slate-400' : 'opacity-90'}`}>
-                    {m.label}
-                  </button>
-                ))}
-              </div>
-            </div>
           </div>
 
         </div>
