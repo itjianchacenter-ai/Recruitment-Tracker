@@ -4234,11 +4234,9 @@ ${HR_EMAIL}`;
     // รหัส 6 หลักที่ generate จะถูกตั้งเป็น password ของ user แล้วโชว์ครั้งเดียวให้ admin จดไปแจ้ง
     const gen6 = () => String(Math.floor(100000 + Math.random() * 900000));
 
-    // Archive of employees who finished probation (Day 90 acknowledged) — kept
-    // separate from on-process candidates so the two don't mix. Sits inside the
-    // "ผู้ใช้ & รหัสผ่าน" modal, above the user list.
+    // Archive of employees who finished probation (passed/failed at any round) — its
+    // own "ประวัติทดลองงาน" tab, separate from on-process candidates and from user mgmt.
     function PassedProbationPanel({ candidates }) {
-      const [open, setOpen] = useState(false);
       const [docKey, setDocKey] = useState(null); // `${id}|${rk}`
       const ROUNDS = [['day30', '30'], ['day60', '60'], ['day90', '90']];
       // probation is "finished" when any round is HR-signed with a closing result
@@ -4254,14 +4252,14 @@ ${HR_EMAIL}`;
       const passCount = finished.filter(c => closingRound(c)?.final_status === 'passed').length;
       const failCount = finished.length - passCount;
       return (
-        <div className="bg-violet-50 border border-violet-200 rounded-lg p-3 mb-3">
-          <button type="button" onClick={() => setOpen(o => !o)} className="w-full flex items-center justify-between gap-2 text-left">
-            <span className="text-xs font-semibold text-violet-900">🗂 ประวัติทดลองงาน (จบแล้ว {finished.length}) <span className="font-normal text-violet-600">· ✓ ผ่าน {passCount} · ✕ ไม่ผ่าน {failCount} · เปิดเอกสารย้อนหลังได้</span></span>
-            <span className="text-violet-500 text-xs whitespace-nowrap">{open ? '▲ ซ่อน' : '▼ ดู'}</span>
-          </button>
-          {open && (
-            <div className="mt-2 space-y-1.5">
-              {finished.length === 0 && <div className="text-[11px] text-slate-400 text-center py-3">ยังไม่มีพนักงานที่ปิดผลทดลองงาน</div>}
+        <div>
+          <div className="flex items-center gap-2 mb-3 flex-wrap">
+            <h2 className="text-base font-semibold text-slate-900">🗂 ประวัติทดลองงาน</h2>
+            <span className="text-xs text-slate-500">จบแล้ว {finished.length} คน · <span className="text-emerald-700">✓ ผ่าน {passCount}</span> · <span className="text-rose-600">✕ ไม่ผ่าน {failCount}</span> · เปิดเอกสารย้อนหลังได้</span>
+          </div>
+          {(
+            <div className="space-y-1.5">
+              {finished.length === 0 && <div className="text-xs text-slate-400 text-center py-10 bg-white border border-dashed border-slate-200 rounded-xl">ยังไม่มีพนักงานที่ปิดผลทดลองงาน</div>}
               {finished.map(c => {
                 const cr = closingRound(c);
                 const passed = cr?.final_status === 'passed';
@@ -4354,7 +4352,6 @@ ${HR_EMAIL}`;
       };
       return (
         <Modal title="👥 ผู้ใช้ & รหัสผ่าน" subtitle={`${loading ? 'กำลังโหลด…' : `มีรหัสแล้ว ${withCode}/${accounts.length} คน`} · admin สร้าง/ออก/รีเซ็ตรหัส 6 หลัก (Supabase Auth จริง)`} onClose={onClose} wide>
-          <PassedProbationPanel candidates={candidates} />
           <div className="flex items-center gap-2 mb-2">
             <input className="input flex-1" placeholder="🔍 ค้นหาชื่อ / อีเมล / แผนก" value={q} onChange={e => setQ(e.target.value)} />
             <button onClick={() => setCreating(v => !v)} disabled={busy} className="text-sm bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white px-3 py-2 rounded-lg ibtn whitespace-nowrap">+ สร้าง User</button>
@@ -4766,11 +4763,13 @@ ${HR_EMAIL}`;
               <div className="inline-flex bg-slate-100 rounded-xl p-1 text-sm">
                 <button onClick={() => setTab('pipeline')} className={`px-4 py-1.5 rounded-lg font-medium transition ${tab==='pipeline' ? 'bg-white shadow text-slate-900' : 'text-slate-500 hover:text-slate-700'}`}>📋 Pipeline</button>
                 <button onClick={() => setTab('reports')} className={`px-4 py-1.5 rounded-lg font-medium transition ${tab==='reports' ? 'bg-white shadow text-slate-900' : 'text-slate-500 hover:text-slate-700'}`}>📊 Reports / KPI</button>
+                <button onClick={() => setTab('history')} className={`px-4 py-1.5 rounded-lg font-medium transition ${tab==='history' ? 'bg-white shadow text-slate-900' : 'text-slate-500 hover:text-slate-700'}`}>🗂 ประวัติทดลองงาน</button>
               </div>
               <button onClick={() => setShowUsers(true)} className="inline-flex items-center gap-1.5 bg-white border border-slate-200 hover:border-slate-300 text-slate-700 text-sm font-medium px-4 py-1.5 rounded-xl ibtn">👥 ผู้ใช้ & รหัสผ่าน</button>
             </div>
 
             {tab === 'reports' && <ReportsView candidates={candidates} />}
+            {tab === 'history' && <PassedProbationPanel candidates={candidates} />}
 
             {tab === 'pipeline' && (<>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
