@@ -880,9 +880,9 @@ function toRow(c) {
         <div style={{ marginTop:'auto', paddingTop:'4px', textAlign:'center' }}>
           {/* If approver supplied real signature_data (PNG base64), use it; else use stylized curve */}
           {approver.signature_data ? (
-            <img src={approver.signature_data} alt="signature" style={{ height:'34px', maxWidth:'95%', margin:'0 auto', display:'block' }} />
+            <img src={approver.signature_data} alt="signature" style={{ height:'54px', maxWidth:'100%', objectFit:'contain', margin:'0 auto', display:'block' }} />
           ) : (
-            <svg viewBox="0 0 140 32" style={{ height:'34px', width:'auto', margin:'0 auto', display:'block' }}>
+            <svg viewBox="0 0 140 32" style={{ height:'54px', width:'auto', margin:'0 auto', display:'block' }}>
               <path d={sigPath} fill="none" stroke="#1e3a8a" strokeWidth="1.5" strokeLinecap="round" />
             </svg>
           )}
@@ -3140,6 +3140,8 @@ ${HR_EMAIL}`;
                   <td className="lbl" style={{width:'15%'}}>ตำแหน่ง</td><td className="val" style={{width:'35%'}}>{candidate.position}</td></tr>
               <tr><td className="lbl">แผนก</td><td className="val">{candidate.department}</td>
                   <td className="lbl">ผู้ประเมิน</td><td className="val">{data.evaluator_name || data.evaluator_email || '—'}</td></tr>
+              <tr><td className="lbl">วันเริ่มงาน</td><td className="val">{fmtDate(candidate.probation?.startDate) || '—'}</td>
+                  <td className="lbl">วันที่ประเมิน</td><td className="val">{data.evaluator_signedAt ? fmtDate(data.evaluator_signedAt.slice(0, 10)) : '—'}</td></tr>
             </tbody>
           </table>
 
@@ -3765,7 +3767,7 @@ ${HR_EMAIL}`;
       );
     }
 
-    function Detail({ c, onClose, onAdvance, onToggleDoc, onUploadFile, onStartApproval, onSendSelfServiceLink, onMilestoneEval, onSetName, onDropCandidate, onCancelPosition, onSaveDoc, onUpdateDistribution, onUpdateShortlist, onAddDoc, onRemoveDoc, onUpdateAttachments, onCancelStepDoc, onCreateProbationRound, onSendProbationToEmployee, onHrSignProbationRound }) {
+    function Detail({ c, onClose, onAdvance, onToggleDoc, onUploadFile, onStartApproval, onSendSelfServiceLink, onMilestoneEval, onSetName, onDropCandidate, onCancelPosition, onSaveDoc, onUpdateDistribution, onUpdateShortlist, onAddDoc, onRemoveDoc, onUpdateAttachments, onCancelStepDoc, onCreateProbationRound, onSendProbationToEmployee, onHrSignProbationRound, onSetProbationStart }) {
       const status = deriveStatus(c);
       const documents = c.documents?.length ? c.documents : DOCUMENT_TEMPLATE.map(d => ({ ...d, received:false, receivedDate:null }));
       const probation = c.probation ?? {};
@@ -3918,7 +3920,10 @@ ${HR_EMAIL}`;
                   <div className="h-full bg-emerald-500" style={{ width: `${Math.min(100, (daysInProbation / PROBATION_DAYS) * 100)}%` }} />
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mt-4 text-xs">
-                  <Info icon="📅" label="วันเริ่มงาน" value={fmtDate(probation.startDate)} />
+                  <div className="bg-white border border-slate-200 rounded-lg p-2">
+                    <div className="text-[10px] text-slate-500 flex items-center gap-1">📅 วันเริ่มงาน <span className="text-rose-500">*</span> <span className="text-slate-400">(ใช้นับวันประเมิน + ขึ้นในเอกสาร)</span></div>
+                    <input type="date" className="input text-xs mt-1" value={probation.startDate || ''} onChange={e => onSetProbationStart(e.target.value)} />
+                  </div>
                   <Info icon="📤" label="ส่งฟอร์มประเมิน" value={fmtDate(probation.evaluationSentDate)} />
                   <Info icon="📥" label="รับเอกสารคืน" value={probation.returnDate ? fmtDate(probation.returnDate) : 'ยังไม่ได้รับ'} />
                 </div>
@@ -4600,6 +4605,10 @@ ${HR_EMAIL}`;
           probationEvals: { ...(x.probationEvals ?? {}), [roundKey]: { ...payload } }
         }));
       }
+      // HR sets/edits the employee's real start date (drives the probation clock + appears on the doc)
+      function setProbationStart(c, date) {
+        patchCandidate(c.id, x => ({ ...x, probation: { ...(x.probation ?? {}), startDate: date || null } }));
+      }
       // HR sends a completed round's result to the employee for acknowledgment.
       // Lands in the employee's own "งานของฉัน" (email = login username).
       async function sendProbationToEmployee(c, roundKey, { employee_email, employee_name }) {
@@ -4858,6 +4867,7 @@ ${HR_EMAIL}`;
               onCreateProbationRound={(roundKey, payload) => createProbationRound(opened, roundKey, payload)}
               onSendProbationToEmployee={(roundKey, payload) => sendProbationToEmployee(opened, roundKey, payload)}
               onHrSignProbationRound={(roundKey, sig) => hrSignProbationRound(opened, roundKey, sig)}
+              onSetProbationStart={(date) => setProbationStart(opened, date)}
             />
           )}
 
