@@ -1454,7 +1454,7 @@ ${HR_EMAIL}`;
     // Assign-by-email (no email): enter email = username → task lands in that user's "งานของฉัน"
     function AssignDistribution({ candidate, step, title, helperText, accent='violet', onUpdate }) {
       const log = candidate.distributions?.[step] ?? [];
-      const [draft, setDraft] = useState({ name:'', email:'', role:'' });
+      const [draft, setDraft] = useState({ name:'', email:'', role:'', division:'' });
       const set = (k, v) => setDraft(d => ({ ...d, [k]:v }));
       const accentClasses = {
         amber:  { bg:'bg-amber-50/50',  border:'border-amber-300',  text:'text-amber-900',  btn:'bg-amber-600 hover:bg-amber-700' },
@@ -1465,12 +1465,13 @@ ${HR_EMAIL}`;
       const [assigning, setAssigning] = useState(false);
       const assign = async () => {
         if (!draft.name?.trim() || !draft.email?.trim()) { showToast('กรุณากรอกชื่อ + อีเมล (username)', 'warning'); return; }
+        if (!draft.role?.trim() || !draft.division?.trim()) { showToast('กรุณากรอกตำแหน่ง + ฝ่าย (ใช้ใส่ในเอกสารประเมิน)', 'warning'); return; }
         setAssigning(true);
         try {
           if (!(await ensureAssigneesRegistered([draft.email], showToast))) return;
           const entry = { id:'r'+Date.now(), ...draft, sentAt:new Date().toISOString() };
           onUpdate([...log, entry]);
-          setDraft({ name:'', email:'', role:'' });
+          setDraft({ name:'', email:'', role:'', division:'' });
           showToast(`👤 มอบหมายให้ ${entry.name} (${entry.email}) แล้ว · งานอยู่ใน "งานของฉัน" ของเขา`, 'email');
         } finally {
           setAssigning(false);
@@ -1480,10 +1481,11 @@ ${HR_EMAIL}`;
       return (
         <div className={`mt-2 ${a.bg} border border-dashed ${a.border} rounded-lg p-2.5 space-y-2`}>
           <div className={`text-[11px] ${a.text} font-medium`}>{title}{helperText && <span className="ml-1 text-slate-500 font-normal">· {helperText}</span>}</div>
-          <div className="grid gap-2" style={{ gridTemplateColumns:'repeat(4, minmax(0,1fr))' }}>
+          <div className="grid gap-2" style={{ gridTemplateColumns:'repeat(5, minmax(0,1fr))' }}>
             <input className="input text-xs" placeholder="ชื่อ-นามสกุล" value={draft.name} onChange={e => set('name', e.target.value)} />
             <input className="input text-xs" placeholder="email = username" value={draft.email} onChange={e => set('email', e.target.value)} />
-            <input className="input text-xs" placeholder="ตำแหน่ง (ไม่บังคับ)" value={draft.role} onChange={e => set('role', e.target.value)} />
+            <input className="input text-xs" placeholder="ตำแหน่ง" value={draft.role} onChange={e => set('role', e.target.value)} />
+            <input className="input text-xs" placeholder="ฝ่าย" value={draft.division} onChange={e => set('division', e.target.value)} />
             <button onClick={assign} disabled={assigning} className={`text-xs ${a.btn} text-white px-2 rounded ibtn whitespace-nowrap disabled:opacity-60`}>{assigning ? 'ตรวจสอบ…' : 'มอบหมาย →'}</button>
           </div>
           {log.length > 0 && (
@@ -1492,7 +1494,7 @@ ${HR_EMAIL}`;
               <ul className="space-y-1">
                 {log.map(e => (
                   <li key={e.id} className="text-[10px] flex items-center justify-between gap-2">
-                    <span className="flex-1 truncate">✓ <b>{e.name}</b> · {e.email}{e.role ? ` · ${e.role}` : ''}</span>
+                    <span className="flex-1 truncate">✓ <b>{e.name}</b> · {e.email}{e.role ? ` · ${e.role}` : ''}{e.division ? ` · ${e.division}` : ''}</span>
                     <span className="text-slate-500 whitespace-nowrap">{fmtDateTime(e.sentAt)}</span>
                     <button onClick={() => remove(e.id)} className="text-rose-500 hover:text-rose-700 text-[10px]">×</button>
                   </li>
@@ -2048,7 +2050,7 @@ ${HR_EMAIL}`;
     // ===== Evaluator side: full interview scorecard (filled in "งานของฉัน") =====
     // HR seeds section 1; the assigned evaluator scores the 14 criteria, writes
     // the summary/goals/conclusion, fills interviewer info AND signs.
-    function ScorecardEvalForm({ initial, candidate, user, onClose, onSave }) {
+    function ScorecardEvalForm({ initial, candidate, user, assignment, onClose, onSave }) {
       const allKeys = EVAL_CRITERIA.flatMap(c => c.items.map(i => i.key));
       const blankScores = Object.fromEntries(allKeys.map(k => [k, 0]));
       const seed = initial ?? {};
@@ -2066,9 +2068,9 @@ ${HR_EMAIL}`;
         probation_goals: seed.probation_goals ?? '',
         conclusion: seed.conclusion ?? '',
         conclusion_other_position: seed.conclusion_other_position ?? '',
-        interviewer_name: seed.interviewer_name ?? user?.name ?? '',
-        interviewer_position: seed.interviewer_position ?? '',
-        interviewer_division: seed.interviewer_division ?? '',
+        interviewer_name: assignment?.name ?? seed.interviewer_name ?? user?.name ?? '',
+        interviewer_position: assignment?.role ?? seed.interviewer_position ?? '',
+        interviewer_division: assignment?.division ?? seed.interviewer_division ?? '',
         signature_data: seed.signature_data ?? null,
       });
       const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
@@ -2156,13 +2158,13 @@ ${HR_EMAIL}`;
               )}
             </div>
 
-            {/* ผู้ประเมิน */}
+            {/* ผู้ประเมิน — ล็อกจากตอน HR มอบหมาย (ผู้ประเมินไม่ต้องกรอกเอง) */}
             <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 space-y-2">
-              <div className="text-xs font-semibold text-slate-700">ผู้สัมภาษณ์ / ผู้ประเมิน</div>
-              <div className="grid grid-cols-3 gap-2">
-                <Field label="ชื่อ" required><input className="input" value={form.interviewer_name} onChange={e => set('interviewer_name', e.target.value)} /></Field>
-                <Field label="ตำแหน่ง"><input className="input" value={form.interviewer_position} onChange={e => set('interviewer_position', e.target.value)} /></Field>
-                <Field label="ฝ่าย"><input className="input" value={form.interviewer_division} onChange={e => set('interviewer_division', e.target.value)} /></Field>
+              <div className="text-xs font-semibold text-slate-700 flex items-center gap-1">ผู้สัมภาษณ์ / ผู้ประเมิน <span className="text-[10px] font-normal text-slate-400">🔒 จาก HR · แก้ไขไม่ได้</span></div>
+              <div className="grid grid-cols-3 gap-3 text-xs">
+                <div><div className="text-slate-500 mb-0.5">ชื่อ</div><div className="font-medium text-slate-800 bg-white border border-slate-200 rounded px-2 py-1.5">{form.interviewer_name || '—'}</div></div>
+                <div><div className="text-slate-500 mb-0.5">ตำแหน่ง</div><div className="font-medium text-slate-800 bg-white border border-slate-200 rounded px-2 py-1.5">{form.interviewer_position || '—'}</div></div>
+                <div><div className="text-slate-500 mb-0.5">ฝ่าย</div><div className="font-medium text-slate-800 bg-white border border-slate-200 rounded px-2 py-1.5">{form.interviewer_division || '—'}</div></div>
               </div>
             </div>
 
@@ -5317,7 +5319,7 @@ ${HR_EMAIL}`;
                     : <button onClick={() => setShowForm(true)} className="bg-violet-600 hover:bg-violet-700 text-white px-6 py-3 rounded-xl font-medium text-sm ibtn">📝 เปิดฟอร์มประเมิน</button>}
                 </div>
                 {showForm && (
-                  <ScorecardEvalForm initial={c.generatedDocs?.[4]?.data} candidate={c} user={{ name: myName }}
+                  <ScorecardEvalForm initial={c.generatedDocs?.[4]?.data} candidate={c} user={{ name: myName }} assignment={active.entry}
                     onClose={() => setShowForm(false)} onSave={(data) => saveScorecard(active, data)} />
                 )}
               </>
