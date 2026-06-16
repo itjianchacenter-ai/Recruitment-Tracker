@@ -5,7 +5,8 @@ import {
   subscribeCandidates, signIn, signOut, getSession, onAuthChange,
   actorFromSession, roleFromSession, usernameToEmail,
   adminListUsers, adminCreateUser, adminResetPassword, adminDeleteUser,
-  findUnregisteredEmails, getClientIp, uploadFile, getSignedUrl
+  findUnregisteredEmails, getClientIp, uploadFile, getSignedUrl,
+  listBranches, createBranch, updateBranch, deleteBranch
 } from './lib/supabase.js';
 
 // ---------------------------------------------------------------------------
@@ -4762,6 +4763,7 @@ ${HR_EMAIL}`;
             <div className="flex items-center gap-2 flex-wrap">
               <div className="flex items-center gap-2 text-sm flex-wrap">
                 <button onClick={() => setTab('pipeline')} className={`bg-white border rounded-xl px-4 py-1.5 font-medium ibtn ${tab==='pipeline' ? 'border-slate-300 shadow-sm text-slate-900' : 'border-slate-200 text-slate-500 hover:text-slate-700 hover:border-slate-300'}`}>📋 Pipeline</button>
+                <button onClick={() => setTab('branches')} className={`bg-white border rounded-xl px-4 py-1.5 font-medium ibtn ${tab==='branches' ? 'border-slate-300 shadow-sm text-slate-900' : 'border-slate-200 text-slate-500 hover:text-slate-700 hover:border-slate-300'}`}>🏬 Branches Manning</button>
                 <button onClick={() => setTab('reports')} className={`bg-white border rounded-xl px-4 py-1.5 font-medium ibtn ${tab==='reports' ? 'border-slate-300 shadow-sm text-slate-900' : 'border-slate-200 text-slate-500 hover:text-slate-700 hover:border-slate-300'}`}>📊 Reports / KPI</button>
                 <button onClick={() => setTab('history')} className={`bg-white border rounded-xl px-4 py-1.5 font-medium ibtn ${tab==='history' ? 'border-slate-300 shadow-sm text-slate-900' : 'border-slate-200 text-slate-500 hover:text-slate-700 hover:border-slate-300'}`}>🗂 ประวัติทดลองงาน</button>
                 <button onClick={() => setShowUsers(true)} className="bg-white border border-slate-200 hover:border-slate-300 rounded-xl px-4 py-1.5 font-medium text-slate-700 ibtn">👥 ผู้ใช้ & รหัสผ่าน</button>
@@ -4770,6 +4772,7 @@ ${HR_EMAIL}`;
 
             {tab === 'reports' && <ReportsView candidates={candidates} />}
             {tab === 'history' && <PassedProbationPanel candidates={candidates} />}
+            {tab === 'branches' && <BranchesManning />}
 
             {tab === 'pipeline' && (<>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -5786,6 +5789,219 @@ ${HR_EMAIL}`;
     // =========================================================================
     // ===================== ROOT APP ==========================================
     // =========================================================================
+    // =========================================================================
+    // Branches Manning — staffing board per branch (F&B). Own tab + Supabase table.
+    // =========================================================================
+    const MANNING_BRANDS = ['JIAN CHA', 'POLLY', 'JAI CHAN'];
+    const MANNING_BR_COLOR = { 'JIAN CHA': '#3D4F2D', 'POLLY': '#722443', 'JAI CHAN': '#185FA5' };
+    const SLOT_BADGES = ['', 'รักษาการ', 'Part time', 'Sat-Sun'];
+    const emptyManning = () => ({ sm: [], asm: [], staff: [] });
+    function branchCounts(b) {
+      const m = b.manning || {};
+      const all = [...(m.sm || []), ...(m.asm || []), ...(m.staff || [])];
+      return {
+        filled: all.filter(s => s.status === 'filled' && s.name).length,
+        hold: all.filter(s => s.status === 'hold').length,
+        vac: all.filter(s => s.status === 'vacant').length,
+        total: all.length,
+      };
+    }
+
+    function SlotRow({ s, i, onClick }) {
+      const num = <span className="inline-flex w-4 h-4 rounded bg-slate-100 text-slate-500 text-[9px] items-center justify-center shrink-0">{i}</span>;
+      if (s.status === 'hold') return <button type="button" onClick={onClick} className="w-full flex items-center gap-1.5 px-1.5 py-1 rounded bg-amber-50 hover:bg-amber-100 text-left ibtn">{num}<span className="text-[11px] text-amber-700">🟡 Hold</span></button>;
+      if (s.status === 'vacant') return <button type="button" onClick={onClick} className="w-full flex items-center gap-1.5 px-1.5 py-1 rounded bg-rose-50 hover:bg-rose-100 text-left ibtn">{num}<span className="text-[11px] text-rose-700">🔴 Vacant</span></button>;
+      return (
+        <button type="button" onClick={onClick} className="w-full flex items-center gap-1.5 px-1.5 py-1 rounded hover:bg-slate-50 text-left ibtn">
+          {num}
+          <span className="text-[11px] text-slate-800 min-w-0 truncate">{s.name}{s.nick ? <span className="text-slate-400"> ({s.nick})</span> : ''}
+            {s.badge ? <span className="ml-1 text-[9px] px-1.5 py-0.5 rounded-full bg-violet-100 text-violet-700">{s.badge}</span> : ''}
+            {s.join ? <span className="ml-1 text-[9px] text-sky-600">Join {s.join}</span> : ''}
+          </span>
+        </button>
+      );
+    }
+
+    function BranchCard({ b, onEditSlot, onRemove }) {
+      const c = branchCounts(b);
+      const full = c.vac === 0 && c.filled >= b.target_pax;
+      const m = b.manning || {};
+      const pill = full
+        ? <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800">✓ Full</span>
+        : c.vac ? <span className="text-[10px] px-2 py-0.5 rounded-full bg-rose-100 text-rose-700">{c.vac} Vacant</span>
+        : <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-100 text-amber-800">{c.hold} Hold</span>;
+      const pct = b.target_pax ? Math.min(100, Math.round(c.filled / b.target_pax * 100)) : 0;
+      const color = MANNING_BR_COLOR[b.brand] || '#475569';
+      const role = (title, key) => {
+        const arr = m[key] || [];
+        return (
+          <div className="mt-2">
+            <div className="flex items-center justify-between">
+              <div className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide">{title}{key === 'staff' ? ` (${arr.filter(s => s.status === 'filled' && s.name).length}/${arr.length})` : ''}</div>
+              <button type="button" onClick={() => onEditSlot(key, -1)} className="text-[10px] text-slate-400 hover:text-slate-700">+ ช่อง</button>
+            </div>
+            {arr.map((s, i) => <SlotRow key={i} s={s} i={i + 1} onClick={() => onEditSlot(key, i)} />)}
+          </div>
+        );
+      };
+      return (
+        <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+          <div style={{ background: color }} className="text-white px-3 py-2">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-sm font-medium truncate">{b.name}</span>
+              <div className="flex items-center gap-1.5">{pill}<button type="button" onClick={onRemove} className="text-white/70 hover:text-white text-xs">✕</button></div>
+            </div>
+            <div className="text-[10px] opacity-85 mt-0.5">{b.brand} · Manning {c.filled}/{b.target_pax} pax</div>
+            <div className="h-1 bg-white/25 rounded-full mt-1.5"><div className="h-full bg-white rounded-full" style={{ width: pct + '%' }} /></div>
+          </div>
+          <div className="px-2.5 py-2">
+            {role('Store Manager', 'sm')}
+            {role('Assistant Manager', 'asm')}
+            {role('Staff', 'staff')}
+          </div>
+        </div>
+      );
+    }
+
+    function SlotEditorModal({ slot, onClose, onSave, onRemove }) {
+      const [s, setS] = useState(slot ?? { status: 'filled', name: '', nick: '', badge: '', join: '' });
+      const set = (k, v) => setS(p => ({ ...p, [k]: v }));
+      const submit = () => {
+        if (s.status === 'filled' && !(s.name || '').trim()) { showToast('กรอกชื่อพนักงาน หรือเลือกสถานะ Hold/Vacant', 'warning'); return; }
+        onSave(s.status === 'filled' ? { ...s, name: s.name.trim() } : { status: s.status });
+      };
+      return (
+        <Modal title="ช่องพนักงาน" subtitle="ตั้งสถานะ + ข้อมูล" onClose={onClose}>
+          <div className="space-y-3">
+            <div className="flex gap-2">
+              {[['filled', '👤 พนักงาน'], ['hold', '🟡 Hold'], ['vacant', '🔴 Vacant']].map(o => (
+                <button key={o[0]} type="button" onClick={() => set('status', o[0])} className={`flex-1 text-xs py-2 rounded-lg border ibtn ${s.status === o[0] ? 'border-slate-900 bg-slate-900 text-white' : 'border-slate-200 text-slate-600 hover:border-slate-300'}`}>{o[1]}</button>
+              ))}
+            </div>
+            {s.status === 'filled' && (
+              <>
+                <Field label="ชื่อ-นามสกุล" required><input className="input" value={s.name} onChange={e => set('name', e.target.value)} autoFocus /></Field>
+                <div className="grid grid-cols-2 gap-3">
+                  <Field label="ชื่อเล่น"><input className="input" value={s.nick} onChange={e => set('nick', e.target.value)} /></Field>
+                  <Field label="ป้ายกำกับ"><select className="input" value={s.badge} onChange={e => set('badge', e.target.value)}>{SLOT_BADGES.map(b => <option key={b} value={b}>{b || '— ไม่มี —'}</option>)}</select></Field>
+                </div>
+                <Field label="วันเริ่มงาน (ถ้ามี)"><input className="input" value={s.join} onChange={e => set('join', e.target.value)} placeholder="เช่น 1/07/26" /></Field>
+              </>
+            )}
+            <div className="flex justify-between items-center gap-2 pt-1">
+              {onRemove ? <button type="button" onClick={onRemove} className="text-xs text-rose-600 hover:text-rose-800">🗑 ลบช่องนี้</button> : <span />}
+              <div className="flex gap-2">
+                <button type="button" onClick={onClose} className="px-3 py-2 text-sm text-slate-600 hover:text-slate-900">ยกเลิก</button>
+                <button type="button" onClick={submit} className="px-4 py-2 text-sm bg-slate-900 hover:bg-slate-800 text-white rounded-lg ibtn">บันทึก</button>
+              </div>
+            </div>
+          </div>
+        </Modal>
+      );
+    }
+
+    function BranchAddModal({ onClose, onSave }) {
+      const [form, setForm] = useState({ brand: 'JIAN CHA', name: '', target_pax: '' });
+      const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+      const submit = (e) => { e.preventDefault(); if (!form.name.trim()) { showToast('กรอกชื่อสาขา', 'warning'); return; } onSave(form); };
+      return (
+        <Modal title="เพิ่มสาขา" subtitle="Branches Manning" onClose={onClose}>
+          <form onSubmit={submit} className="space-y-3">
+            <Field label="แบรนด์" required><select className="input" value={form.brand} onChange={e => set('brand', e.target.value)}>{MANNING_BRANDS.map(b => <option key={b}>{b}</option>)}</select></Field>
+            <Field label="ชื่อสาขา" required><input className="input" value={form.name} onChange={e => set('name', e.target.value)} placeholder="เช่น Central Lardprao" autoFocus /></Field>
+            <Field label="Manning target (pax)" required><input type="number" className="input" value={form.target_pax} onChange={e => set('target_pax', e.target.value)} placeholder="เช่น 16" /></Field>
+            <div className="flex justify-end gap-2 pt-1"><button type="button" onClick={onClose} className="px-3 py-2 text-sm text-slate-600 hover:text-slate-900">ยกเลิก</button><button type="submit" className="px-4 py-2 text-sm bg-slate-900 hover:bg-slate-800 text-white rounded-lg ibtn">เพิ่มสาขา</button></div>
+          </form>
+        </Modal>
+      );
+    }
+
+    function BranchesManning() {
+      const [branches, setBranches] = useState(null);   // null = loading
+      const [err, setErr] = useState('');
+      const [brand, setBrand] = useState('ทั้งหมด');
+      const [gapOnly, setGapOnly] = useState(false);
+      const [edit, setEdit] = useState(null);           // { branch, role, index }  index<0 = new slot
+      const [showAdd, setShowAdd] = useState(false);
+
+      useEffect(() => { listBranches().then(b => { setBranches(b); setErr(''); }).catch(e => { setErr(e?.message || String(e)); setBranches([]); }); }, []);
+
+      const persistManning = (id, manning) => {
+        setBranches(prev => prev.map(b => b.id === id ? { ...b, manning } : b));
+        updateBranch(id, { manning }).catch(e => showToast('บันทึกไม่สำเร็จ: ' + (e?.message || ''), 'warning'));
+      };
+      const saveSlot = (slot) => {
+        const { branch, role, index } = edit;
+        const m = { ...(branch.manning || {}) };
+        const arr = [...(m[role] || [])];
+        if (index < 0) arr.push(slot); else arr[index] = slot;
+        m[role] = arr;
+        persistManning(branch.id, m);
+        setEdit(null);
+      };
+      const removeSlot = () => {
+        const { branch, role, index } = edit;
+        const m = { ...(branch.manning || {}) };
+        m[role] = (m[role] || []).filter((_, i) => i !== index);
+        persistManning(branch.id, m);
+        setEdit(null);
+      };
+      const addBranch = (form) => {
+        createBranch({ brand: form.brand, name: form.name.trim(), target_pax: Number(form.target_pax) || 0, sort_order: (branches?.length || 0) + 1, manning: emptyManning() })
+          .then(row => { setBranches(prev => [...(prev || []), row]); setShowAdd(false); showToast(`เพิ่มสาขา ${form.name} แล้ว`, 'success'); })
+          .catch(e => showToast('เพิ่มสาขาไม่สำเร็จ: ' + (e?.message || ''), 'warning'));
+      };
+      const removeBranch = (b) => {
+        if (!confirm(`ลบสาขา "${b.name}"?\nข้อมูลกำลังคนของสาขานี้จะหายทั้งหมด`)) return;
+        deleteBranch(b.id).then(() => setBranches(prev => prev.filter(x => x.id !== b.id))).catch(e => showToast('ลบไม่สำเร็จ: ' + (e?.message || ''), 'warning'));
+      };
+
+      if (branches === null) return <div className="text-center text-slate-400 text-sm py-16">กำลังโหลดข้อมูลสาขา…</div>;
+
+      const list = branches
+        .filter(b => brand === 'ทั้งหมด' || b.brand === brand)
+        .filter(b => { if (!gapOnly) return true; const c = branchCounts(b); return c.hold > 0 || c.vac > 0; });
+      const tot = branches.reduce((a, b) => { const c = branchCounts(b); a.f += c.filled; a.t += b.target_pax; a.h += c.hold; a.v += c.vac; return a; }, { f: 0, t: 0, h: 0, v: 0 });
+
+      return (
+        <div>
+          <div className="flex items-center justify-between gap-2 flex-wrap mb-3">
+            <h2 className="text-base font-semibold text-slate-900">🏬 Branches Manning <span className="text-xs font-normal text-slate-400">· กำลังคนรายสาขา</span></h2>
+            <div className="flex items-center gap-3">
+              <label className="text-xs text-slate-600 flex items-center gap-1.5 cursor-pointer"><input type="checkbox" checked={gapOnly} onChange={e => setGapOnly(e.target.checked)} /> เฉพาะสาขาที่ขาดคน</label>
+              <button onClick={() => setShowAdd(true)} className="text-sm bg-slate-900 hover:bg-slate-800 text-white px-3 py-1.5 rounded-lg ibtn">+ เพิ่มสาขา</button>
+            </div>
+          </div>
+
+          {err && <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 mb-3 text-xs text-amber-800">⚠️ ใช้งานข้อมูลสาขาไม่ได้: {err} · ตรวจว่ารัน <b>supabase/branches.sql</b> บน Supabase แล้ว</div>}
+
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-3">
+            {[['สาขา', branches.length, 'text-slate-900'], ['กำลังคน', `${tot.f}/${tot.t}`, 'text-emerald-700'], ['Hold', tot.h, 'text-amber-700'], ['Vacant', tot.v, 'text-rose-700']].map(s => (
+              <div key={s[0]} className="bg-slate-50 rounded-lg px-3 py-2"><div className="text-[11px] text-slate-500">{s[0]}</div><div className={`text-lg font-semibold ${s[2]}`}>{s[1]}</div></div>
+            ))}
+          </div>
+
+          <div className="flex gap-1.5 flex-wrap mb-3">
+            {['ทั้งหมด', ...MANNING_BRANDS].map(br => {
+              const n = br === 'ทั้งหมด' ? branches.length : branches.filter(b => b.brand === br).length;
+              return <button key={br} onClick={() => setBrand(br)} className={`text-xs px-3 py-1 rounded-lg border ibtn ${brand === br ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'}`}>{br} ({n})</button>;
+            })}
+          </div>
+
+          {list.length === 0 ? (
+            <div className="bg-white border border-dashed border-slate-300 rounded-xl p-10 text-center text-slate-500 text-sm">{branches.length === 0 ? 'ยังไม่มีสาขา · กด "+ เพิ่มสาขา"' : 'ไม่มีสาขาตามตัวกรอง'}</div>
+          ) : (
+            <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))' }}>
+              {list.map(b => <BranchCard key={b.id} b={b} onEditSlot={(role, index) => setEdit({ branch: b, role, index })} onRemove={() => removeBranch(b)} />)}
+            </div>
+          )}
+
+          {edit && <SlotEditorModal slot={edit.index >= 0 ? (edit.branch.manning?.[edit.role] || [])[edit.index] : null} onClose={() => setEdit(null)} onSave={saveSlot} onRemove={edit.index >= 0 ? removeSlot : null} />}
+          {showAdd && <BranchAddModal onClose={() => setShowAdd(false)} onSave={addBranch} />}
+        </div>
+      );
+    }
+
     function App() {
       const [session, setSession] = useState(undefined);   // undefined = loading, null = logged out
       const [candidates, setCandidates] = useState([]);

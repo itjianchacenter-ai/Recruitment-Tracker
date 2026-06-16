@@ -97,6 +97,37 @@ export async function deleteCandidate(id) {
   if (error) throw error;
 }
 
+// ---------- Branches Manning (staffing board per branch) -------------------
+export async function listBranches() {
+  const { data, error } = await supabase
+    .from('branches')
+    .select('*')
+    .order('sort_order', { ascending: true })
+    .order('name', { ascending: true });
+  if (error) throw error;
+  return data ?? [];
+}
+export async function createBranch(payload) {
+  const { data, error } = await supabase
+    .from('branches')
+    .insert({ ...payload, updated_by: getActor() })
+    .select().single();
+  if (error) throw error;
+  return data;
+}
+export async function updateBranch(id, patch) {
+  const { data, error } = await supabase
+    .from('branches')
+    .update({ ...patch, updated_by: getActor(), updated_at: new Date().toISOString() })
+    .eq('id', id).select().single();
+  if (error) throw error;
+  return data;
+}
+export async function deleteBranch(id) {
+  const { error } = await supabase.from('branches').delete().eq('id', id);
+  if (error) throw error;
+}
+
 // ---------- Storage (resume / signed docs / pre-boarding uploads) ----------
 // Bucket "recruitment" (private). Path convention: {candidateId}/step{n}/{filename}
 
