@@ -5823,7 +5823,7 @@ ${HR_EMAIL}`;
       );
     }
 
-    function BranchCard({ b, onEditSlot, onRemove }) {
+    function BranchCard({ b, onEditSlot, onEdit, onRemove }) {
       const c = branchCounts(b);
       const full = c.vac === 0 && c.filled >= b.target_pax;
       const m = b.manning || {};
@@ -5850,7 +5850,7 @@ ${HR_EMAIL}`;
           <div style={{ background: color }} className="text-white px-3 py-2">
             <div className="flex items-center justify-between gap-2">
               <span className="text-sm font-medium truncate">{b.name}</span>
-              <div className="flex items-center gap-1.5">{pill}<button type="button" onClick={onRemove} className="text-white/70 hover:text-white text-xs">✕</button></div>
+              <div className="flex items-center gap-1.5">{pill}<button type="button" onClick={onEdit} className="text-white/70 hover:text-white text-xs" title="แก้ไขสาขา">✎</button><button type="button" onClick={onRemove} className="text-white/70 hover:text-white text-xs" title="ลบสาขา">✕</button></div>
             </div>
             <div className="text-[10px] opacity-85 mt-0.5">{b.brand} · Manning {c.filled}/{b.target_pax} pax</div>
             <div className="h-1 bg-white/25 rounded-full mt-1.5"><div className="h-full bg-white rounded-full" style={{ width: pct + '%' }} /></div>
@@ -5915,17 +5915,18 @@ ${HR_EMAIL}`;
       );
     }
 
-    function BranchAddModal({ onClose, onSave }) {
-      const [form, setForm] = useState({ brand: 'JIAN CHA', name: '', target_pax: '' });
+    function BranchFormModal({ initial, onClose, onSave }) {
+      const editing = !!initial;
+      const [form, setForm] = useState(initial ?? { brand: 'JIAN CHA', name: '', target_pax: '' });
       const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
-      const submit = (e) => { e.preventDefault(); if (!form.name.trim()) { showToast('กรอกชื่อสาขา', 'warning'); return; } onSave(form); };
+      const submit = (e) => { e.preventDefault(); if (!String(form.name).trim()) { showToast('กรอกชื่อสาขา', 'warning'); return; } onSave(form); };
       return (
-        <Modal title="เพิ่มสาขา" subtitle="Branches Manning" onClose={onClose}>
+        <Modal title={editing ? 'แก้ไขสาขา' : 'เพิ่มสาขา'} subtitle="Branches Manning" onClose={onClose}>
           <form onSubmit={submit} className="space-y-3">
             <Field label="แบรนด์" required><select className="input" value={form.brand} onChange={e => set('brand', e.target.value)}>{MANNING_BRANDS.map(b => <option key={b}>{b}</option>)}</select></Field>
             <Field label="ชื่อสาขา" required><input className="input" value={form.name} onChange={e => set('name', e.target.value)} placeholder="เช่น Central Lardprao" autoFocus /></Field>
             <Field label="Manning target (pax)" required><input type="number" className="input" value={form.target_pax} onChange={e => set('target_pax', e.target.value)} placeholder="เช่น 16" /></Field>
-            <div className="flex justify-end gap-2 pt-1"><button type="button" onClick={onClose} className="px-3 py-2 text-sm text-slate-600 hover:text-slate-900">ยกเลิก</button><button type="submit" className="px-4 py-2 text-sm bg-slate-900 hover:bg-slate-800 text-white rounded-lg ibtn">เพิ่มสาขา</button></div>
+            <div className="flex justify-end gap-2 pt-1"><button type="button" onClick={onClose} className="px-3 py-2 text-sm text-slate-600 hover:text-slate-900">ยกเลิก</button><button type="submit" className="px-4 py-2 text-sm bg-slate-900 hover:bg-slate-800 text-white rounded-lg ibtn">{editing ? 'บันทึก' : 'เพิ่มสาขา'}</button></div>
           </form>
         </Modal>
       );
@@ -5938,6 +5939,7 @@ ${HR_EMAIL}`;
       const [gapOnly, setGapOnly] = useState(false);
       const [edit, setEdit] = useState(null);           // { branch, role, index }  index<0 = new slot
       const [showAdd, setShowAdd] = useState(false);
+      const [editBranch, setEditBranch] = useState(null);  // branch being renamed/retargeted
 
       useEffect(() => { listBranches().then(b => { setBranches(b); setErr(''); }).catch(e => { setErr(e?.message || String(e)); setBranches([]); }); }, []);
 
@@ -5969,6 +5971,13 @@ ${HR_EMAIL}`;
       const removeBranch = (b) => {
         if (!confirm(`ลบสาขา "${b.name}"?\nข้อมูลกำลังคนของสาขานี้จะหายทั้งหมด`)) return;
         deleteBranch(b.id).then(() => setBranches(prev => prev.filter(x => x.id !== b.id))).catch(e => showToast('ลบไม่สำเร็จ: ' + (e?.message || ''), 'warning'));
+      };
+      const saveBranchInfo = (form) => {
+        const patch = { brand: form.brand, name: String(form.name).trim(), target_pax: Number(form.target_pax) || 0 };
+        setBranches(prev => prev.map(b => b.id === editBranch.id ? { ...b, ...patch } : b));
+        updateBranch(editBranch.id, patch).catch(e => showToast('บันทึกไม่สำเร็จ: ' + (e?.message || ''), 'warning'));
+        setEditBranch(null);
+        showToast('แก้ไขข้อมูลสาขาแล้ว', 'success');
       };
 
       if (branches === null) return <div className="text-center text-slate-400 text-sm py-16">กำลังโหลดข้อมูลสาขา…</div>;
@@ -6007,12 +6016,13 @@ ${HR_EMAIL}`;
             <div className="bg-white border border-dashed border-slate-300 rounded-xl p-10 text-center text-slate-500 text-sm">{branches.length === 0 ? 'ยังไม่มีสาขา · กด "+ เพิ่มสาขา"' : 'ไม่มีสาขาตามตัวกรอง'}</div>
           ) : (
             <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))' }}>
-              {list.map(b => <BranchCard key={b.id} b={b} onEditSlot={(role, index) => setEdit({ branch: b, role, index })} onRemove={() => removeBranch(b)} />)}
+              {list.map(b => <BranchCard key={b.id} b={b} onEditSlot={(role, index) => setEdit({ branch: b, role, index })} onEdit={() => setEditBranch(b)} onRemove={() => removeBranch(b)} />)}
             </div>
           )}
 
           {edit && <SlotEditorModal slot={edit.index >= 0 ? (edit.branch.manning?.[edit.role] || [])[edit.index] : null} onClose={() => setEdit(null)} onSave={saveSlot} onRemove={edit.index >= 0 ? removeSlot : null} />}
-          {showAdd && <BranchAddModal onClose={() => setShowAdd(false)} onSave={addBranch} />}
+          {showAdd && <BranchFormModal onClose={() => setShowAdd(false)} onSave={addBranch} />}
+          {editBranch && <BranchFormModal initial={{ brand: editBranch.brand, name: editBranch.name, target_pax: editBranch.target_pax }} onClose={() => setEditBranch(null)} onSave={saveBranchInfo} />}
         </div>
       );
     }
