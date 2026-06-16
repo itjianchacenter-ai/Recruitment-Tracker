@@ -37,7 +37,9 @@ create policy "auth insert branches" on public.branches for insert to authentica
 create policy "auth update branches" on public.branches for update to authenticated using (true) with check (true);
 create policy "auth delete branches" on public.branches for delete to authenticated using (true);
 
--- (optional) seed a couple of branches to start — safe to delete/edit in the app
-insert into public.branches (brand, name, target_pax, sort_order, manning) values
-  ('JIAN CHA', 'Central Lardprao', 16, 1, '{"sm":[{"name":"สุนันทา กระวีนทร์","nick":"ต้นน้ำ","status":"filled","badge":"รักษาการ"}],"asm":[{"name":"ธนกร ดุษฎีเดช","nick":"ดีโอ","status":"filled"},{"status":"hold"}],"staff":[{"name":"Min Zaw Khaing","nick":"ลุย","status":"filled"},{"status":"hold"},{"status":"hold"}]}'::jsonb)
-on conflict do nothing;
+-- (optional) seed ONE sample branch — only when the table is still empty, so
+-- re-running this file is safe (won't duplicate). Delete/edit it in the app.
+insert into public.branches (brand, name, target_pax, sort_order, manning)
+select 'JIAN CHA', 'Central Lardprao', 16, 1,
+  '{"sm":[{"name":"สุนันทา กระวีนทร์","nick":"ต้นน้ำ","status":"filled","badge":"รักษาการ"}],"asm":[{"name":"ธนกร ดุษฎีเดช","nick":"ดีโอ","status":"filled"},{"status":"hold"}],"staff":[{"name":"Min Zaw Khaing","nick":"ลุย","status":"filled"},{"status":"hold"},{"status":"hold"}]}'::jsonb
+where not exists (select 1 from public.branches);
