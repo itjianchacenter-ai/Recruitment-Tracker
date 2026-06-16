@@ -59,7 +59,7 @@ const _branches = [
     staff:[{name:'Min Zaw Khaing',nick:'ลุย',status:'filled'},{name:'ชญาภา จันทะขาตร',nick:'ครีม',status:'filled'},{name:'Kai Intrabusorn',nick:'ไก่',status:'filled'},{status:'hold'},{status:'hold'},{status:'hold'},{status:'hold'}] } },
   { id:'b2', brand:'POLLY', name:'Central World 7Fl.', target_pax:9, sort_order:2, manning:{
     sm:[{name:'อุมาพร ลีดา',nick:'เขม',status:'filled'}], asm:[],
-    staff:[{name:'MON TIN LAY',nick:'น้อ',status:'filled'},{name:'SANDAR LWIN',nick:'แสง',status:'filled'},{name:'เจนจิรา ฮันจันทา',nick:'เจน',status:'filled'},{status:'vacant'}] } },
+    staff:[{name:'MON TIN LAY',nick:'น้อ',status:'filled'},{name:'SANDAR LWIN',nick:'แสง',status:'filled'},{name:'เจนจิรา ฮันจันทา',nick:'เจน',status:'filled'},{status:'vacant'},{status:'hold'},{status:'hold'}] } },
   { id:'b3', brand:'JAI CHAN', name:'Dragon Town', target_pax:13, sort_order:3, manning:{
     sm:[{status:'hold'}],
     asm:[{name:'Naing Tun Oo',nick:'อเล็กซ์',status:'filled',badge:'รักษาการ'},{name:'นภสร พึ่งช่วย',nick:'กุหลาย',status:'filled',badge:'รักษาการ'}],

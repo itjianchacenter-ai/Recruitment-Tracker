@@ -5825,13 +5825,17 @@ ${HR_EMAIL}`;
 
     function BranchCard({ b, onEditSlot, onEdit, onRemove }) {
       const c = branchCounts(b);
-      const full = c.vac === 0 && c.filled >= b.target_pax;
+      const full = c.total > 0 && c.filled === c.total;   // ทุกช่องมีคน (ไม่มี Hold/Vacant)
       const m = b.manning || {};
+      const gapParts = [];
+      if (c.vac) gapParts.push(`${c.vac} Vacant`);
+      if (c.hold) gapParts.push(`${c.hold} Hold`);
       const pill = full
-        ? <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800">✓ Full</span>
-        : c.vac ? <span className="text-[10px] px-2 py-0.5 rounded-full bg-rose-100 text-rose-700">{c.vac} Vacant</span>
-        : <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-100 text-amber-800">{c.hold} Hold</span>;
-      const pct = b.target_pax ? Math.min(100, Math.round(c.filled / b.target_pax * 100)) : 0;
+        ? <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 whitespace-nowrap">✓ Full</span>
+        : c.total === 0
+          ? <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-100 text-slate-500 whitespace-nowrap">ยังไม่มีช่อง</span>
+          : <span className={`text-[10px] px-2 py-0.5 rounded-full whitespace-nowrap ${c.vac ? 'bg-rose-100 text-rose-700' : 'bg-amber-100 text-amber-800'}`}>{gapParts.join(' · ')}</span>;
+      const pct = c.total ? Math.round(c.filled / c.total * 100) : 0;
       const color = MANNING_BR_COLOR[b.brand] || '#475569';
       const role = (title, key) => {
         const arr = m[key] || [];
@@ -5852,7 +5856,7 @@ ${HR_EMAIL}`;
               <span className="text-sm font-medium truncate">{b.name}</span>
               <div className="flex items-center gap-1.5">{pill}<button type="button" onClick={onEdit} className="text-white/70 hover:text-white text-xs" title="แก้ไขสาขา">✎</button><button type="button" onClick={onRemove} className="text-white/70 hover:text-white text-xs" title="ลบสาขา">✕</button></div>
             </div>
-            <div className="text-[10px] opacity-85 mt-0.5">{b.brand} · Manning {c.filled}/{b.target_pax} pax</div>
+            <div className="text-[10px] opacity-85 mt-0.5">{b.brand} · Manning {c.filled}/{c.total} pax</div>
             <div className="h-1 bg-white/25 rounded-full mt-1.5"><div className="h-full bg-white rounded-full" style={{ width: pct + '%' }} /></div>
           </div>
           <div className="px-2.5 py-2">
@@ -5925,7 +5929,8 @@ ${HR_EMAIL}`;
           <form onSubmit={submit} className="space-y-3">
             <Field label="แบรนด์" required><select className="input" value={form.brand} onChange={e => set('brand', e.target.value)}>{MANNING_BRANDS.map(b => <option key={b}>{b}</option>)}</select></Field>
             <Field label="ชื่อสาขา" required><input className="input" value={form.name} onChange={e => set('name', e.target.value)} placeholder="เช่น Central Lardprao" autoFocus /></Field>
-            <Field label="Manning target (pax)" required><input type="number" className="input" value={form.target_pax} onChange={e => set('target_pax', e.target.value)} placeholder="เช่น 16" /></Field>
+            {!editing && <Field label="จำนวนช่อง Staff เริ่มต้น"><input type="number" className="input" value={form.target_pax} onChange={e => set('target_pax', e.target.value)} placeholder="เช่น 13 (เพิ่ม/ลบทีหลังได้)" /></Field>}
+            {editing && <div className="text-[11px] text-slate-500 bg-slate-50 rounded-lg p-2.5">💡 จำนวนช่อง (manning total) ปรับได้ที่การ์ดสาขาโดยตรง — กด "+ ช่อง" เพิ่ม หรือกดช่องเพื่อลบ</div>}
             <div className="flex justify-end gap-2 pt-1"><button type="button" onClick={onClose} className="px-3 py-2 text-sm text-slate-600 hover:text-slate-900">ยกเลิก</button><button type="submit" className="px-4 py-2 text-sm bg-slate-900 hover:bg-slate-800 text-white rounded-lg ibtn">{editing ? 'บันทึก' : 'เพิ่มสาขา'}</button></div>
           </form>
         </Modal>
@@ -5964,7 +5969,9 @@ ${HR_EMAIL}`;
         setEdit(null);
       };
       const addBranch = (form) => {
-        createBranch({ brand: form.brand, name: form.name.trim(), target_pax: Number(form.target_pax) || 0, sort_order: (branches?.length || 0) + 1, manning: emptyManning() })
+        const n = Math.max(0, Number(form.target_pax) || 0);
+        const manning = { sm: [], asm: [], staff: Array.from({ length: n }, () => ({ status: 'hold' })) };
+        createBranch({ brand: form.brand, name: form.name.trim(), target_pax: n, sort_order: (branches?.length || 0) + 1, manning })
           .then(row => { setBranches(prev => [...(prev || []), row]); setShowAdd(false); showToast(`เพิ่มสาขา ${form.name} แล้ว`, 'success'); })
           .catch(e => showToast('เพิ่มสาขาไม่สำเร็จ: ' + (e?.message || ''), 'warning'));
       };
