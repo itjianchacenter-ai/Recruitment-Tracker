@@ -5942,6 +5942,7 @@ ${HR_EMAIL}`;
       const [err, setErr] = useState('');
       const [brand, setBrand] = useState('ทั้งหมด');
       const [gapOnly, setGapOnly] = useState(false);
+      const [q, setQ] = useState('');
       const [edit, setEdit] = useState(null);           // { branch, role, index }  index<0 = new slot
       const [showAdd, setShowAdd] = useState(false);
       const [editBranch, setEditBranch] = useState(null);  // branch being renamed/retargeted
@@ -5991,6 +5992,7 @@ ${HR_EMAIL}`;
 
       const list = branches
         .filter(b => brand === 'ทั้งหมด' || b.brand === brand)
+        .filter(b => !q.trim() || (b.name || '').toLowerCase().includes(q.trim().toLowerCase()))
         .filter(b => { if (!gapOnly) return true; const c = branchCounts(b); return c.hold > 0 || c.vac > 0; });
       const tot = branches.reduce((a, b) => { const c = branchCounts(b); a.f += c.filled; a.t += b.target_pax; a.h += c.hold; a.v += c.vac; return a; }, { f: 0, t: 0, h: 0, v: 0 });
 
@@ -6012,12 +6014,18 @@ ${HR_EMAIL}`;
             ))}
           </div>
 
-          <div className="flex gap-1.5 flex-wrap mb-3">
+          <div className="flex items-center gap-2 flex-wrap mb-3">
+            <div className="relative flex-1 min-w-[180px]">
+              <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 text-sm">🔍</span>
+              <input value={q} onChange={e => setQ(e.target.value)} placeholder="ค้นหา / เลือกสาขา…" className="w-full text-sm border border-slate-200 rounded-lg pl-8 pr-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-slate-300" />
+            </div>
             {['ทั้งหมด', ...MANNING_BRANDS].map(br => {
               const n = br === 'ทั้งหมด' ? branches.length : branches.filter(b => b.brand === br).length;
               return <button key={br} onClick={() => setBrand(br)} className={`text-xs px-3 py-1 rounded-lg border ibtn ${brand === br ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'}`}>{br} ({n})</button>;
             })}
+            {(q || brand !== 'ทั้งหมด' || gapOnly) && <button onClick={() => { setQ(''); setBrand('ทั้งหมด'); setGapOnly(false); }} className="text-xs text-slate-500 hover:text-slate-900 px-2">ล้างตัวกรอง</button>}
           </div>
+          {(q || brand !== 'ทั้งหมด' || gapOnly) && <div className="text-[11px] text-slate-500 mb-2">แสดง {list.length}/{branches.length} สาขา</div>}
 
           {list.length === 0 ? (
             <div className="bg-white border border-dashed border-slate-300 rounded-xl p-10 text-center text-slate-500 text-sm">{branches.length === 0 ? 'ยังไม่มีสาขา · กด "+ เพิ่มสาขา"' : 'ไม่มีสาขาตามตัวกรอง'}</div>
