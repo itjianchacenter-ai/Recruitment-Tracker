@@ -6041,7 +6041,7 @@ ${HR_EMAIL}`;
         .filter(b => brand === 'ทั้งหมด' || b.brand === brand)
         .filter(b => selectedIds.size === 0 || selectedIds.has(b.id))   // multi-select (empty = all)
         .filter(b => { if (!gapOnly) return true; const c = branchCounts(b); return c.hold > 0 || c.vac > 0; });
-      const tot = branches.reduce((a, b) => { const c = branchCounts(b); a.f += c.filled; a.t += b.target_pax; a.h += c.hold; a.v += c.vac; return a; }, { f: 0, t: 0, h: 0, v: 0 });
+      const tot = branches.reduce((a, b) => { const c = branchCounts(b); a.f += c.filled; a.t += c.total; a.h += c.hold; a.v += c.vac; return a; }, { f: 0, t: 0, h: 0, v: 0 });
 
       return (
         <div>
