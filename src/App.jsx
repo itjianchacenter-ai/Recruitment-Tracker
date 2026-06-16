@@ -5942,7 +5942,9 @@ ${HR_EMAIL}`;
       const [err, setErr] = useState('');
       const [brand, setBrand] = useState('ทั้งหมด');
       const [gapOnly, setGapOnly] = useState(false);
-      const [q, setQ] = useState('');
+      const [q, setQ] = useState('');                          // search inside the picker
+      const [selectedIds, setSelectedIds] = useState(() => new Set());  // multi-select; empty = show all
+      const [pickerOpen, setPickerOpen] = useState(false);
       const [edit, setEdit] = useState(null);           // { branch, role, index }  index<0 = new slot
       const [showAdd, setShowAdd] = useState(false);
       const [editBranch, setEditBranch] = useState(null);  // branch being renamed/retargeted
@@ -5990,9 +5992,10 @@ ${HR_EMAIL}`;
 
       if (branches === null) return <div className="text-center text-slate-400 text-sm py-16">กำลังโหลดข้อมูลสาขา…</div>;
 
+      const pickerList = branches.filter(b => !q.trim() || (b.name || '').toLowerCase().includes(q.trim().toLowerCase()));
       const list = branches
         .filter(b => brand === 'ทั้งหมด' || b.brand === brand)
-        .filter(b => !q.trim() || (b.name || '').toLowerCase().includes(q.trim().toLowerCase()))
+        .filter(b => selectedIds.size === 0 || selectedIds.has(b.id))   // multi-select (empty = all)
         .filter(b => { if (!gapOnly) return true; const c = branchCounts(b); return c.hold > 0 || c.vac > 0; });
       const tot = branches.reduce((a, b) => { const c = branchCounts(b); a.f += c.filled; a.t += b.target_pax; a.h += c.hold; a.v += c.vac; return a; }, { f: 0, t: 0, h: 0, v: 0 });
 
@@ -6014,18 +6017,47 @@ ${HR_EMAIL}`;
             ))}
           </div>
 
-          <div className="flex items-center gap-2 flex-wrap mb-3">
-            <div className="relative flex-1 min-w-[180px]">
-              <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 text-sm">🔍</span>
-              <input value={q} onChange={e => setQ(e.target.value)} placeholder="ค้นหา / เลือกสาขา…" className="w-full text-sm border border-slate-200 rounded-lg pl-8 pr-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-slate-300" />
-            </div>
+          <div className="flex items-center gap-2 flex-wrap mb-2">
             {['ทั้งหมด', ...MANNING_BRANDS].map(br => {
               const n = br === 'ทั้งหมด' ? branches.length : branches.filter(b => b.brand === br).length;
               return <button key={br} onClick={() => setBrand(br)} className={`text-xs px-3 py-1 rounded-lg border ibtn ${brand === br ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'}`}>{br} ({n})</button>;
             })}
-            {(q || brand !== 'ทั้งหมด' || gapOnly) && <button onClick={() => { setQ(''); setBrand('ทั้งหมด'); setGapOnly(false); }} className="text-xs text-slate-500 hover:text-slate-900 px-2">ล้างตัวกรอง</button>}
+            <button onClick={() => setPickerOpen(o => !o)} className={`text-xs px-3 py-1 rounded-lg border ibtn ${selectedIds.size ? 'bg-violet-600 text-white border-violet-600' : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'}`}>📍 เลือกสาขา ({selectedIds.size}) {pickerOpen ? '▲' : '▼'}</button>
+            {(selectedIds.size > 0 || brand !== 'ทั้งหมด' || gapOnly) && <button onClick={() => { setSelectedIds(new Set()); setBrand('ทั้งหมด'); setGapOnly(false); }} className="text-xs text-slate-500 hover:text-slate-900 px-2">ล้างตัวกรอง</button>}
           </div>
-          {(q || brand !== 'ทั้งหมด' || gapOnly) && <div className="text-[11px] text-slate-500 mb-2">แสดง {list.length}/{branches.length} สาขา</div>}
+
+          {pickerOpen && (
+            <div className="bg-white border border-slate-200 rounded-xl p-3 mb-3">
+              <div className="flex items-center gap-2 mb-2 flex-wrap">
+                <div className="relative flex-1 min-w-[160px]"><span className="absolute left-2.5 top-1.5 text-slate-400">🔍</span><input value={q} onChange={e => setQ(e.target.value)} placeholder="ค้นหาสาขาในรายการ…" className="w-full text-sm border border-slate-200 rounded-lg pl-8 pr-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-slate-300" /></div>
+                <button type="button" onClick={() => setSelectedIds(new Set(pickerList.map(b => b.id)))} className="text-xs px-2.5 py-1.5 rounded-lg border border-slate-200 hover:border-slate-300">เลือกทั้งหมด{q ? ' (ที่ค้นหา)' : ''}</button>
+                <button type="button" onClick={() => setSelectedIds(new Set())} className="text-xs px-2.5 py-1.5 rounded-lg border border-slate-200 hover:border-slate-300">ล้าง</button>
+              </div>
+              <div className="divide-y divide-slate-100 max-h-64 overflow-y-auto border border-slate-100 rounded-lg">
+                {pickerList.length === 0 ? <div className="text-xs text-slate-400 text-center py-4">ไม่พบสาขา</div> : pickerList.map(b => {
+                  const c = branchCounts(b);
+                  return (
+                    <label key={b.id} className="flex items-center gap-2 px-2.5 py-1.5 text-xs cursor-pointer hover:bg-slate-50">
+                      <input type="checkbox" checked={selectedIds.has(b.id)} onChange={() => setSelectedIds(prev => { const n = new Set(prev); n.has(b.id) ? n.delete(b.id) : n.add(b.id); return n; })} />
+                      <span className="flex-1 min-w-0 truncate">{b.name}</span>
+                      <span className="text-[10px] text-slate-400">{b.brand}</span>
+                      <span className={`text-[10px] ${c.vac ? 'text-rose-600' : c.hold ? 'text-amber-600' : 'text-emerald-600'}`}>{c.filled}/{c.total}</span>
+                    </label>
+                  );
+                })}
+              </div>
+              <div className="text-[10px] text-slate-400 mt-1.5">เลือกไว้ {selectedIds.size} สาขา · ไม่เลือก = แสดงทุกสาขา</div>
+            </div>
+          )}
+
+          {selectedIds.size > 0 && (
+            <div className="flex gap-1.5 flex-wrap mb-2">
+              {[...selectedIds].slice(0, 40).map(idv => { const b = branches.find(x => x.id === idv); if (!b) return null; return <span key={idv} className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full bg-violet-100 text-violet-700">{b.name}<button type="button" onClick={() => setSelectedIds(prev => { const n = new Set(prev); n.delete(idv); return n; })} className="font-bold">×</button></span>; })}
+              {selectedIds.size > 40 && <span className="text-[11px] text-slate-400">+{selectedIds.size - 40}</span>}
+            </div>
+          )}
+
+          {(selectedIds.size > 0 || brand !== 'ทั้งหมด' || gapOnly) && <div className="text-[11px] text-slate-500 mb-2">แสดง {list.length}/{branches.length} สาขา</div>}
 
           {list.length === 0 ? (
             <div className="bg-white border border-dashed border-slate-300 rounded-xl p-10 text-center text-slate-500 text-sm">{branches.length === 0 ? 'ยังไม่มีสาขา · กด "+ เพิ่มสาขา"' : 'ไม่มีสาขาตามตัวกรอง'}</div>
