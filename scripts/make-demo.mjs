@@ -63,7 +63,7 @@ const _branches = [
   { id:'b3', brand:'JAI CHAN', name:'Dragon Town', target_pax:13, sort_order:3, manning:{
     sm:[{status:'hold'}],
     asm:[{name:'Naing Tun Oo',nick:'อเล็กซ์',status:'filled',badge:'รักษาการ'},{name:'นภสร พึ่งช่วย',nick:'กุหลาย',status:'filled',badge:'รักษาการ'}],
-    staff:[{name:'AUNG ZIN HTWE',nick:'อ่าว',status:'filled'},{name:'ชัยสิทธิ์ ดำนวณ',nick:'บูรา',status:'filled',badge:'Part time'},{name:'วรัญชญา ยมนา',nick:'มะยม',status:'filled',badge:'Sat-Sun'},{name:'สายรุ้ง จันทวง',status:'filled',join:'1/07/26'},{status:'hold'},{status:'hold'}] } },
+    staff:[{name:'AUNG ZIN HTWE',nick:'อ่าว',status:'filled',badge:'Full time'},{name:'ชัยสิทธิ์ ดำนวณ',nick:'บูรา',status:'filled',badge:'Part time'},{name:'วรัญชญา ยมนา',nick:'มะยม',status:'filled',badge:'Sat-Sun'},{name:'สายรุ้ง จันทวง',status:'filled',badge:'Full time',join:'2026-07-01',last:'2026-09-30'},{status:'hold'},{status:'hold'}] } },
 ];
 async function listBranches(){ return JSON.parse(JSON.stringify(_branches)); }
 async function createBranch(p){ const b={ id:'b'+(++_seq), created_at:_nowIso(), updated_at:_nowIso(), ...p }; _branches.push(b); return JSON.parse(JSON.stringify(b)); }

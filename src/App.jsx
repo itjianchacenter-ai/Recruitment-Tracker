@@ -5794,7 +5794,7 @@ ${HR_EMAIL}`;
     // =========================================================================
     const MANNING_BRANDS = ['JIAN CHA', 'POLLY', 'JAI CHAN'];
     const MANNING_BR_COLOR = { 'JIAN CHA': '#3D4F2D', 'POLLY': '#722443', 'JAI CHAN': '#185FA5' };
-    const SLOT_BADGES = ['', 'รักษาการ', 'Part time', 'Sat-Sun'];
+    const PRESET_BADGES = ['Full time', 'Part time', 'รักษาการ', 'Sat-Sun'];
     const emptyManning = () => ({ sm: [], asm: [], staff: [] });
     function branchCounts(b) {
       const m = b.manning || {};
@@ -5816,7 +5816,8 @@ ${HR_EMAIL}`;
           {num}
           <span className="text-[11px] text-slate-800 min-w-0 truncate">{s.name}{s.nick ? <span className="text-slate-400"> ({s.nick})</span> : ''}
             {s.badge ? <span className="ml-1 text-[9px] px-1.5 py-0.5 rounded-full bg-violet-100 text-violet-700">{s.badge}</span> : ''}
-            {s.join ? <span className="ml-1 text-[9px] text-sky-600">Join {s.join}</span> : ''}
+            {s.join ? <span className="ml-1 text-[9px] text-sky-600">Join {fmtDate(s.join)}</span> : ''}
+            {s.last ? <span className="ml-1 text-[9px] text-rose-600">Last {fmtDate(s.last)}</span> : ''}
           </span>
         </button>
       );
@@ -5864,8 +5865,9 @@ ${HR_EMAIL}`;
     }
 
     function SlotEditorModal({ slot, onClose, onSave, onRemove }) {
-      const [s, setS] = useState(slot ?? { status: 'filled', name: '', nick: '', badge: '', join: '' });
+      const [s, setS] = useState(slot ?? { status: 'filled', name: '', nick: '', badge: '', join: '', last: '' });
       const set = (k, v) => setS(p => ({ ...p, [k]: v }));
+      const [customBadge, setCustomBadge] = useState(!!(s.badge && !PRESET_BADGES.includes(s.badge)));
       const submit = () => {
         if (s.status === 'filled' && !(s.name || '').trim()) { showToast('กรอกชื่อพนักงาน หรือเลือกสถานะ Hold/Vacant', 'warning'); return; }
         onSave(s.status === 'filled' ? { ...s, name: s.name.trim() } : { status: s.status });
@@ -5883,9 +5885,22 @@ ${HR_EMAIL}`;
                 <Field label="ชื่อ-นามสกุล" required><input className="input" value={s.name} onChange={e => set('name', e.target.value)} autoFocus /></Field>
                 <div className="grid grid-cols-2 gap-3">
                   <Field label="ชื่อเล่น"><input className="input" value={s.nick} onChange={e => set('nick', e.target.value)} /></Field>
-                  <Field label="ป้ายกำกับ"><select className="input" value={s.badge} onChange={e => set('badge', e.target.value)}>{SLOT_BADGES.map(b => <option key={b} value={b}>{b || '— ไม่มี —'}</option>)}</select></Field>
+                  <Field label="สถานะพนักงาน">
+                    <select className="input" value={customBadge ? '__other__' : (s.badge || '')} onChange={e => {
+                      if (e.target.value === '__other__') { setCustomBadge(true); set('badge', ''); }
+                      else { setCustomBadge(false); set('badge', e.target.value); }
+                    }}>
+                      <option value="">— ไม่ระบุ —</option>
+                      {PRESET_BADGES.map(b => <option key={b} value={b}>{b}</option>)}
+                      <option value="__other__">อื่นๆ (ระบุเอง)</option>
+                    </select>
+                  </Field>
                 </div>
-                <Field label="วันเริ่มงาน (ถ้ามี)"><input className="input" value={s.join} onChange={e => set('join', e.target.value)} placeholder="เช่น 1/07/26" /></Field>
+                {customBadge && <Field label="ระบุสถานะ"><input className="input" value={s.badge} onChange={e => set('badge', e.target.value)} placeholder="เช่น Trainee · สัญญาจ้าง · ฝึกงาน" autoFocus /></Field>}
+                <div className="grid grid-cols-2 gap-3">
+                  <Field label="วันเริ่มงาน (Join)"><input type="date" className="input" value={s.join || ''} onChange={e => set('join', e.target.value)} /></Field>
+                  <Field label="วันสุดท้าย (Last day)"><input type="date" className="input" value={s.last || ''} onChange={e => set('last', e.target.value)} /></Field>
+                </div>
               </>
             )}
             <div className="flex justify-between items-center gap-2 pt-1">
