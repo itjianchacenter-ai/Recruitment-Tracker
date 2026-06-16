@@ -5800,8 +5800,8 @@ ${HR_EMAIL}`;
     const emptyManning = () => ({ sm: [], asm: [], staff: [] });
     // Config drives both boards from the same components: Branches (สาขา) and HQ (ฝ่าย).
     const MANNING_CFG = {
-      branch: { kind: 'branch', icon: '🏬', title: 'Branches Manning', word: 'สาขา', groupLabel: 'แบรนด์', groups: MANNING_BRANDS, colors: MANNING_BR_COLOR, roles: [['sm', 'Store Manager'], ['asm', 'Assistant Manager'], ['staff', 'Staff']] },
-      hq: { kind: 'hq', icon: '🏢', title: 'HQ Manning', word: 'ฝ่าย', groupLabel: 'สังกัด', groups: ['ส่วนกลาง', ...MANNING_BRANDS], colors: { 'ส่วนกลาง': '#475569', ...MANNING_BR_COLOR }, roles: [['sm', 'หัวหน้าฝ่าย (Head)'], ['asm', 'ผู้จัดการ / รองฯ'], ['staff', 'เจ้าหน้าที่ (Staff)']] },
+      branch: { kind: 'branch', icon: '🏬', title: 'Branches Manning', word: 'สาขา', groupLabel: 'แบรนด์', groups: MANNING_BRANDS, colors: MANNING_BR_COLOR, flat: false, roles: [['sm', 'Store Manager'], ['asm', 'Assistant Manager'], ['staff', 'Staff']] },
+      hq: { kind: 'hq', icon: '🏢', title: 'HQ Manning', word: 'ฝ่าย', groupLabel: 'สังกัด', groups: ['ส่วนกลาง', ...MANNING_BRANDS], colors: { 'ส่วนกลาง': '#475569', ...MANNING_BR_COLOR }, flat: true, roles: [['staff', 'รายชื่อ']] },
     };
     function branchCounts(b) {
       const m = b.manning || {};
@@ -5822,6 +5822,7 @@ ${HR_EMAIL}`;
         <button type="button" onClick={onClick} className="w-full flex items-center gap-1.5 px-1.5 py-1 rounded hover:bg-slate-50 text-left ibtn">
           {num}
           <span className="text-[11px] text-slate-800 min-w-0 truncate">{s.name}{s.nick ? <span className="text-slate-400"> ({s.nick})</span> : ''}
+            {s.title ? <span className="text-slate-500"> · {s.title}</span> : ''}
             {s.badge ? <span className="ml-1 text-[9px] px-1.5 py-0.5 rounded-full bg-violet-100 text-violet-700">{s.badge}</span> : ''}
             {s.join ? <span className="ml-1 text-[9px] text-sky-600">Join {fmtDate(s.join)}</span> : ''}
             {s.last ? <span className="ml-1 text-[9px] text-rose-600">Last {fmtDate(s.last)}</span> : ''}
@@ -5867,14 +5868,21 @@ ${HR_EMAIL}`;
             <div className="h-1 bg-white/25 rounded-full mt-1.5"><div className="h-full bg-white rounded-full" style={{ width: pct + '%' }} /></div>
           </div>
           <div className="px-2.5 py-2">
-            {cfg.roles.map(([key, label]) => role(label, key))}
+            {cfg.flat ? (
+              <div>
+                {(m.staff || []).map((s, i) => <SlotRow key={i} s={s} i={i + 1} onClick={() => onEditSlot('staff', i)} />)}
+                <button type="button" onClick={() => onEditSlot('staff', -1)} className="text-[11px] text-slate-400 hover:text-slate-700 mt-1.5">+ เพิ่มตำแหน่ง</button>
+              </div>
+            ) : (
+              cfg.roles.map(([key, label]) => role(label, key))
+            )}
           </div>
         </div>
       );
     }
 
-    function SlotEditorModal({ slot, onClose, onSave, onRemove }) {
-      const [s, setS] = useState(slot ?? { status: 'filled', name: '', nick: '', badge: '', join: '', last: '' });
+    function SlotEditorModal({ slot, flat, onClose, onSave, onRemove }) {
+      const [s, setS] = useState(slot ?? { status: 'filled', name: '', nick: '', title: '', badge: '', join: '', last: '' });
       const set = (k, v) => setS(p => ({ ...p, [k]: v }));
       const [customBadge, setCustomBadge] = useState(!!(s.badge && !PRESET_BADGES.includes(s.badge)));
       const submit = () => {
@@ -5892,6 +5900,7 @@ ${HR_EMAIL}`;
             {s.status === 'filled' && (
               <>
                 <Field label="ชื่อ-นามสกุล" required><input className="input" value={s.name} onChange={e => set('name', e.target.value)} autoFocus /></Field>
+                {flat && <Field label="ตำแหน่ง"><input className="input" value={s.title || ''} onChange={e => set('title', e.target.value)} placeholder="เช่น ผู้จัดการฝ่าย · เจ้าหน้าที่อาวุโส" /></Field>}
                 <div className="grid grid-cols-2 gap-3">
                   <Field label="ชื่อเล่น"><input className="input" value={s.nick} onChange={e => set('nick', e.target.value)} /></Field>
                   <Field label="สถานะพนักงาน">
@@ -6073,7 +6082,7 @@ ${HR_EMAIL}`;
             </div>
           )}
 
-          {edit && <SlotEditorModal slot={edit.index >= 0 ? (edit.branch.manning?.[edit.role] || [])[edit.index] : null} onClose={() => setEdit(null)} onSave={saveSlot} onRemove={edit.index >= 0 ? removeSlot : null} />}
+          {edit && <SlotEditorModal slot={edit.index >= 0 ? (edit.branch.manning?.[edit.role] || [])[edit.index] : null} flat={cfg.flat} onClose={() => setEdit(null)} onSave={saveSlot} onRemove={edit.index >= 0 ? removeSlot : null} />}
           {showAdd && <BranchFormModal cfg={cfg} onClose={() => setShowAdd(false)} onSave={addBranch} />}
           {editBranch && <BranchFormModal cfg={cfg} initial={{ brand: editBranch.brand, name: editBranch.name, target_pax: editBranch.target_pax }} onClose={() => setEditBranch(null)} onSave={saveBranchInfo} />}
         </div>
