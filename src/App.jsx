@@ -5814,24 +5814,33 @@ ${HR_EMAIL}`;
       };
     }
 
-    function SlotRow({ s, i, onClick }) {
+    function SlotRow({ s, i, onClick, onMove, isFirst, isLast }) {
       const num = <span className="inline-flex w-4 h-4 rounded bg-slate-100 text-slate-500 text-[9px] items-center justify-center shrink-0">{i}</span>;
-      if (s.status === 'hold') return <button type="button" onClick={onClick} className="w-full flex items-center gap-1.5 px-1.5 py-1 rounded bg-amber-50 hover:bg-amber-100 text-left ibtn">{num}<span className="text-[11px] text-amber-700">🟡 Hold</span></button>;
-      if (s.status === 'vacant') return <button type="button" onClick={onClick} className="w-full flex items-center gap-1.5 px-1.5 py-1 rounded bg-rose-50 hover:bg-rose-100 text-left ibtn">{num}<span className="text-[11px] text-rose-700">🔴 Vacant</span></button>;
-      return (
-        <button type="button" onClick={onClick} className="w-full flex items-center gap-1.5 px-1.5 py-1 rounded hover:bg-slate-50 text-left ibtn">
-          {num}
-          <span className="text-[11px] text-slate-800 min-w-0 truncate">{s.name}{s.nick ? <span className="text-slate-400"> ({s.nick})</span> : ''}
+      const cls = s.status === 'hold' ? 'bg-amber-50 hover:bg-amber-100'
+        : s.status === 'vacant' ? 'bg-rose-50 hover:bg-rose-100'
+        : 'hover:bg-slate-50';
+      const body = s.status === 'hold' ? <span className="text-[11px] text-amber-700">🟡 Hold</span>
+        : s.status === 'vacant' ? <span className="text-[11px] text-rose-700">🔴 Vacant</span>
+        : <span className="text-[11px] text-slate-800 min-w-0 truncate">{s.name}{s.nick ? <span className="text-slate-400"> ({s.nick})</span> : ''}
             {s.title ? <span className="text-slate-500"> · {s.title}</span> : ''}
             {s.badge ? <span className="ml-1 text-[9px] px-1.5 py-0.5 rounded-full bg-violet-100 text-violet-700">{s.badge}</span> : ''}
             {s.join ? <span className="ml-1 text-[9px] text-sky-600">Join {fmtDate(s.join)}</span> : ''}
             {s.last ? <span className="ml-1 text-[9px] text-rose-600">Last {fmtDate(s.last)}</span> : ''}
-          </span>
-        </button>
+          </span>;
+      return (
+        <div className="flex items-center gap-0.5">
+          <button type="button" onClick={onClick} className={`flex-1 min-w-0 flex items-center gap-1.5 px-1.5 py-1 rounded text-left ibtn ${cls}`}>{num}{body}</button>
+          {onMove && (
+            <div className="flex flex-col leading-none shrink-0">
+              <button type="button" disabled={isFirst} onClick={() => onMove(-1)} title="เลื่อนขึ้น" className="text-[9px] text-slate-400 hover:text-slate-800 disabled:opacity-20 disabled:hover:text-slate-400 px-1">▲</button>
+              <button type="button" disabled={isLast} onClick={() => onMove(1)} title="เลื่อนลง" className="text-[9px] text-slate-400 hover:text-slate-800 disabled:opacity-20 disabled:hover:text-slate-400 px-1">▼</button>
+            </div>
+          )}
+        </div>
       );
     }
 
-    function BranchCard({ b, cfg, onEditSlot, onEdit, onRemove }) {
+    function BranchCard({ b, cfg, onEditSlot, onMove, onEdit, onRemove }) {
       const c = branchCounts(b);
       const full = c.total > 0 && c.filled === c.total;   // ทุกช่องมีคน (ไม่มี Hold/Vacant)
       const m = b.manning || {};
@@ -5853,7 +5862,7 @@ ${HR_EMAIL}`;
               <div className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide">{title}{key === 'staff' ? ` (${arr.filter(s => s.status === 'filled' && s.name).length}/${arr.length})` : ''}</div>
               <button type="button" onClick={() => onEditSlot(key, -1)} className="text-[10px] text-slate-400 hover:text-slate-700">+ ช่อง</button>
             </div>
-            {arr.map((s, i) => <SlotRow key={i} s={s} i={i + 1} onClick={() => onEditSlot(key, i)} />)}
+            {arr.map((s, i) => <SlotRow key={i} s={s} i={i + 1} onClick={() => onEditSlot(key, i)} onMove={(dir) => onMove(key, i, dir)} isFirst={i === 0} isLast={i === arr.length - 1} />)}
           </div>
         );
       };
@@ -5870,7 +5879,7 @@ ${HR_EMAIL}`;
           <div className="px-2.5 py-2">
             {cfg.flat ? (
               <div>
-                {(m.staff || []).map((s, i) => <SlotRow key={i} s={s} i={i + 1} onClick={() => onEditSlot('staff', i)} />)}
+                {(m.staff || []).map((s, i) => <SlotRow key={i} s={s} i={i + 1} onClick={() => onEditSlot('staff', i)} onMove={(dir) => onMove('staff', i, dir)} isFirst={i === 0} isLast={i === (m.staff || []).length - 1} />)}
                 <button type="button" onClick={() => onEditSlot('staff', -1)} className="text-[11px] text-slate-400 hover:text-slate-700 mt-1.5">+ เพิ่มตำแหน่ง</button>
               </div>
             ) : (
@@ -5986,6 +5995,15 @@ ${HR_EMAIL}`;
         persistManning(branch.id, m);
         setEdit(null);
       };
+      const moveSlot = (branchId, role, index, dir) => {
+        const b = branches.find(x => x.id === branchId);
+        if (!b) return;
+        const arr = [...((b.manning || {})[role] || [])];
+        const j = index + dir;
+        if (j < 0 || j >= arr.length) return;
+        [arr[index], arr[j]] = [arr[j], arr[index]];
+        persistManning(branchId, { ...(b.manning || {}), [role]: arr });
+      };
       const addBranch = (form) => {
         const n = Math.max(0, Number(form.target_pax) || 0);
         const manning = { sm: [], asm: [], staff: Array.from({ length: n }, () => ({ status: 'hold' })) };
@@ -6078,7 +6096,7 @@ ${HR_EMAIL}`;
             <div className="bg-white border border-dashed border-slate-300 rounded-xl p-10 text-center text-slate-500 text-sm">{branches.length === 0 ? `ยังไม่มี${W} · กด "+ เพิ่ม${W}"` : `ไม่มี${W}ตามตัวกรอง`}</div>
           ) : (
             <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))' }}>
-              {list.map(b => <BranchCard key={b.id} b={b} cfg={cfg} onEditSlot={(role, index) => setEdit({ branch: b, role, index })} onEdit={() => setEditBranch(b)} onRemove={() => removeBranch(b)} />)}
+              {list.map(b => <BranchCard key={b.id} b={b} cfg={cfg} onEditSlot={(role, index) => setEdit({ branch: b, role, index })} onMove={(role, index, dir) => moveSlot(b.id, role, index, dir)} onEdit={() => setEditBranch(b)} onRemove={() => removeBranch(b)} />)}
             </div>
           )}
 
