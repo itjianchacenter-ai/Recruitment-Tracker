@@ -5814,33 +5814,44 @@ ${HR_EMAIL}`;
       };
     }
 
-    function SlotRow({ s, i, onClick, onMove, isFirst, isLast }) {
-      const num = <span className="inline-flex w-4 h-4 rounded bg-slate-100 text-slate-500 text-[9px] items-center justify-center shrink-0">{i}</span>;
+    function SlotRow({ s, i, onClick, draggable, dragging, dropTarget, onDragStart, onDragOver, onDrop, onDragEnd }) {
+      const num = <span className="inline-flex w-4 h-4 rounded bg-slate-100 text-slate-500 text-[9px] items-center justify-center shrink-0 mt-px">{i}</span>;
       const cls = s.status === 'hold' ? 'bg-amber-50 hover:bg-amber-100'
         : s.status === 'vacant' ? 'bg-rose-50 hover:bg-rose-100'
         : 'hover:bg-slate-50';
       const body = s.status === 'hold' ? <span className="text-[11px] text-amber-700">🟡 Hold</span>
         : s.status === 'vacant' ? <span className="text-[11px] text-rose-700">🔴 Vacant</span>
-        : <span className="text-[11px] text-slate-800 min-w-0 truncate">{s.name}{s.nick ? <span className="text-slate-400"> ({s.nick})</span> : ''}
+        : <span className="text-[11px] text-slate-800 min-w-0">{s.name}{s.nick ? <span className="text-slate-400"> ({s.nick})</span> : ''}
             {s.title ? <span className="text-slate-500"> · {s.title}</span> : ''}
             {s.badge ? <span className="ml-1 text-[9px] px-1.5 py-0.5 rounded-full bg-violet-100 text-violet-700">{s.badge}</span> : ''}
             {s.join ? <span className="ml-1 text-[9px] text-sky-600">Join {fmtDate(s.join)}</span> : ''}
             {s.last ? <span className="ml-1 text-[9px] text-rose-600">Last {fmtDate(s.last)}</span> : ''}
           </span>;
       return (
-        <div className="flex items-center gap-0.5">
-          <button type="button" onClick={onClick} className={`flex-1 min-w-0 flex items-center gap-1.5 px-1.5 py-1 rounded text-left ibtn ${cls}`}>{num}{body}</button>
-          {onMove && (
-            <div className="flex flex-col leading-none shrink-0">
-              <button type="button" disabled={isFirst} onClick={() => onMove(-1)} title="เลื่อนขึ้น" className="text-[9px] text-slate-400 hover:text-slate-800 disabled:opacity-20 disabled:hover:text-slate-400 px-1">▲</button>
-              <button type="button" disabled={isLast} onClick={() => onMove(1)} title="เลื่อนลง" className="text-[9px] text-slate-400 hover:text-slate-800 disabled:opacity-20 disabled:hover:text-slate-400 px-1">▼</button>
-            </div>
-          )}
+        <div draggable={draggable} onDragStart={onDragStart} onDragOver={onDragOver} onDrop={onDrop} onDragEnd={onDragEnd}
+          className={`flex items-start gap-1 rounded ${dragging ? 'opacity-40' : ''} ${dropTarget ? 'ring-2 ring-violet-300' : ''}`}>
+          {draggable && <span className="text-slate-300 hover:text-slate-500 cursor-grab select-none text-xs px-0.5 pt-1" title="ลากเพื่อจัดลำดับ">⠿</span>}
+          <button type="button" onClick={onClick} className={`flex-1 min-w-0 flex items-start gap-1.5 px-1.5 py-1 rounded text-left ibtn ${cls}`}>{num}{body}</button>
         </div>
       );
     }
 
-    function BranchCard({ b, cfg, onEditSlot, onMove, onEdit, onRemove }) {
+    function BranchCard({ b, cfg, onEditSlot, onReorder, onEdit, onRemove }) {
+      const [dragKey, setDragKey] = useState(null);   // `${role}:${index}` being dragged
+      const [overKey, setOverKey] = useState(null);    // `${role}:${index}` hovered as drop target
+      const sp = (role, i) => ({
+        draggable: true,
+        dragging: dragKey === `${role}:${i}`,
+        dropTarget: overKey === `${role}:${i}` && dragKey !== `${role}:${i}`,
+        onDragStart: (e) => { setDragKey(`${role}:${i}`); if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move'; },
+        onDragOver: (e) => { e.preventDefault(); if (dragKey && dragKey.slice(0, dragKey.indexOf(':')) === role) setOverKey(`${role}:${i}`); },
+        onDrop: (e) => {
+          e.preventDefault();
+          if (dragKey) { const ci = dragKey.indexOf(':'); const r = dragKey.slice(0, ci); const from = +dragKey.slice(ci + 1); if (r === role && from !== i) onReorder(role, from, i); }
+          setDragKey(null); setOverKey(null);
+        },
+        onDragEnd: () => { setDragKey(null); setOverKey(null); },
+      });
       const c = branchCounts(b);
       const full = c.total > 0 && c.filled === c.total;   // ทุกช่องมีคน (ไม่มี Hold/Vacant)
       const m = b.manning || {};
@@ -5862,7 +5873,7 @@ ${HR_EMAIL}`;
               <div className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide">{title}{key === 'staff' ? ` (${arr.filter(s => s.status === 'filled' && s.name).length}/${arr.length})` : ''}</div>
               <button type="button" onClick={() => onEditSlot(key, -1)} className="text-[10px] text-slate-400 hover:text-slate-700">+ ช่อง</button>
             </div>
-            {arr.map((s, i) => <SlotRow key={i} s={s} i={i + 1} onClick={() => onEditSlot(key, i)} onMove={(dir) => onMove(key, i, dir)} isFirst={i === 0} isLast={i === arr.length - 1} />)}
+            {arr.map((s, i) => <SlotRow key={i} s={s} i={i + 1} onClick={() => onEditSlot(key, i)} {...sp(key, i)} />)}
           </div>
         );
       };
@@ -5879,7 +5890,7 @@ ${HR_EMAIL}`;
           <div className="px-2.5 py-2">
             {cfg.flat ? (
               <div>
-                {(m.staff || []).map((s, i) => <SlotRow key={i} s={s} i={i + 1} onClick={() => onEditSlot('staff', i)} onMove={(dir) => onMove('staff', i, dir)} isFirst={i === 0} isLast={i === (m.staff || []).length - 1} />)}
+                {(m.staff || []).map((s, i) => <SlotRow key={i} s={s} i={i + 1} onClick={() => onEditSlot('staff', i)} {...sp('staff', i)} />)}
                 <button type="button" onClick={() => onEditSlot('staff', -1)} className="text-[11px] text-slate-400 hover:text-slate-700 mt-1.5">+ เพิ่มตำแหน่ง</button>
               </div>
             ) : (
@@ -5995,13 +6006,13 @@ ${HR_EMAIL}`;
         persistManning(branch.id, m);
         setEdit(null);
       };
-      const moveSlot = (branchId, role, index, dir) => {
+      const reorderSlot = (branchId, role, from, to) => {
         const b = branches.find(x => x.id === branchId);
         if (!b) return;
         const arr = [...((b.manning || {})[role] || [])];
-        const j = index + dir;
-        if (j < 0 || j >= arr.length) return;
-        [arr[index], arr[j]] = [arr[j], arr[index]];
+        if (from < 0 || from >= arr.length || to < 0 || to >= arr.length || from === to) return;
+        const [moved] = arr.splice(from, 1);
+        arr.splice(to, 0, moved);
         persistManning(branchId, { ...(b.manning || {}), [role]: arr });
       };
       const addBranch = (form) => {
@@ -6095,8 +6106,8 @@ ${HR_EMAIL}`;
           {list.length === 0 ? (
             <div className="bg-white border border-dashed border-slate-300 rounded-xl p-10 text-center text-slate-500 text-sm">{branches.length === 0 ? `ยังไม่มี${W} · กด "+ เพิ่ม${W}"` : `ไม่มี${W}ตามตัวกรอง`}</div>
           ) : (
-            <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))' }}>
-              {list.map(b => <BranchCard key={b.id} b={b} cfg={cfg} onEditSlot={(role, index) => setEdit({ branch: b, role, index })} onMove={(role, index, dir) => moveSlot(b.id, role, index, dir)} onEdit={() => setEditBranch(b)} onRemove={() => removeBranch(b)} />)}
+            <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(360px, 1fr))' }}>
+              {list.map(b => <BranchCard key={b.id} b={b} cfg={cfg} onEditSlot={(role, index) => setEdit({ branch: b, role, index })} onReorder={(role, from, to) => reorderSlot(b.id, role, from, to)} onEdit={() => setEditBranch(b)} onRemove={() => removeBranch(b)} />)}
             </div>
           )}
 
