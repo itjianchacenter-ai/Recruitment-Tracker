@@ -3818,10 +3818,10 @@ ${HR_EMAIL}`;
             <Info icon="👤" label="ผู้สร้าง" value={c.created_by || '—'} />
           </div>
 
-          {/* Step tracker */}
-          <Section icon="📋" title={`ขั้นตอนทั้งหมด (${TOTAL_STEPS} Steps)`}>
+          {/* Step tracker — direct-probation employees skip Steps 1–5, show probation only */}
+          <Section icon="📋" title={c.probation?.direct ? 'ขั้นตอน · ทดลองงาน (เพิ่มเข้าโดยตรง · ไม่ผ่านสรรหา)' : `ขั้นตอนทั้งหมด (${TOTAL_STEPS} Steps)`}>
             <ol className="space-y-1.5">
-              {STEPS.map((s) => {
+              {STEPS.filter(s => !c.probation?.direct || s.id === TOTAL_STEPS).map((s) => {
                 const done = s.id < c.current_step || c.status === 'passed';
                 const current = s.id === c.current_step && c.status === 'active';
                 const log = c.steps?.find(x => x.step === s.id);
