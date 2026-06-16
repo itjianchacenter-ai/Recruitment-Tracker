@@ -3011,9 +3011,8 @@ ${HR_EMAIL}`;
     // "งานของฉัน": page 1 = score grid, page 2 = comment + signature.
     // =====================================================================
     const PROB_FINAL_OPTIONS = [
-      { v:'passed',   label:'ผ่านทดลองงาน · บรรจุพนักงานประจำ' },
-      { v:'extended', label:'ทดลองงานต่อ (ต่ออายุประเมิน)' },
-      { v:'failed',   label:'ไม่ผ่านทดลองงาน' },
+      { v:'passed', label:'ผ่านทดลองงาน · บรรจุพนักงานประจำ' },
+      { v:'failed', label:'ไม่ผ่านทดลองงาน' },
     ];
 
     // Evaluator's single-round form (filled in "งานของฉัน")
@@ -3032,9 +3031,9 @@ ${HR_EMAIL}`;
       const submit = (e) => {
         e.preventDefault();
         if (!allScored) { showToast(`กรุณาให้คะแนนให้ครบทุกข้อ (${allKeys.length} ข้อ)`, 'warning'); return; }
-        if (!finalStatus) { showToast('กรุณาเลือกผลสรุปทดลองงานรอบนี้', 'warning'); return; }
+        if (isFinal && !finalStatus) { showToast('กรุณาเลือกผลสรุป (ผ่าน/ไม่ผ่านทดลองงาน)', 'warning'); return; }
         if (!signature) { showToast('กรุณาลงลายเซ็นก่อนส่ง', 'warning'); return; }
-        onSave({ scores, comment, evaluator_signature: signature, final_status: finalStatus });
+        onSave({ scores, comment, evaluator_signature: signature, final_status: isFinal ? finalStatus : '' });
       };
       return (
         <Modal title={`ประเมินทดลองงาน · Day ${dayLabel}`} subtitle={`${candidate.name || candidate.position} · ติ๊กคะแนน + คอมเมนต์ + ลงนาม`} onClose={onClose} wide>
@@ -3080,19 +3079,21 @@ ${HR_EMAIL}`;
               <div className={`text-[10px] text-right mt-0.5 ${comment.length >= 350 ? 'text-amber-600' : 'text-slate-400'}`}>{comment.length}/350</div>
             </div>
 
-            {/* สรุปผลทดลองงานรอบนี้ (อยู่ในฟอร์มผู้ประเมิน · ไม่ขึ้นในเอกสาร) */}
-            <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
-              <div className="text-xs font-semibold text-amber-900 mb-2">สรุปผลทดลองงานรอบนี้{isFinal ? ' (รอบสุดท้าย)' : ''} <span className="text-rose-500">*</span></div>
-              <div className="text-[10px] text-amber-700 mb-2">เลือกผลของรอบนี้ · "ไม่ผ่าน" = ปิดโปร · "ผ่าน" = บรรจุ · "ต่อ" = ไปประเมินรอบถัดไป</div>
-              <div className="space-y-1">
-                {PROB_FINAL_OPTIONS.map(o => (
-                  <label key={o.v} className="flex items-center gap-2 text-xs cursor-pointer">
-                    <input type="radio" name="final_status" checked={finalStatus === o.v} onChange={() => setFinalStatus(o.v)} />
-                    {o.label}
-                  </label>
-                ))}
+            {/* สรุปผลทดลองงาน — เฉพาะรอบสุดท้าย (Day 90) เท่านั้น */}
+            {isFinal && (
+              <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
+                <div className="text-xs font-semibold text-amber-900 mb-2">สรุปผลทดลองงาน (รอบสุดท้าย · Day 90) <span className="text-rose-500">*</span></div>
+                <div className="text-[10px] text-amber-700 mb-2">"ผ่าน" = บรรจุพนักงานประจำ · "ไม่ผ่าน" = ปิดทดลองงาน</div>
+                <div className="space-y-1">
+                  {PROB_FINAL_OPTIONS.map(o => (
+                    <label key={o.v} className="flex items-center gap-2 text-xs cursor-pointer">
+                      <input type="radio" name="final_status" checked={finalStatus === o.v} onChange={() => setFinalStatus(o.v)} />
+                      {o.label}
+                    </label>
+                  ))}
+                </div>
               </div>
-            </div>
+            )}
 
             {/* ลายเซ็น */}
             <div className="bg-white border border-slate-200 rounded-lg p-3">
@@ -3171,15 +3172,18 @@ ${HR_EMAIL}`;
             <div className="section-bar" style={{marginTop:'12px'}}>ส่วนที่ 3 : ความคิดเห็น / ข้อเสนอแนะ</div>
             <div style={{ border:'1px solid #94a3b8', borderTop:'none', minHeight:'70px', padding:'10px', whiteSpace:'pre-wrap', fontSize:'11px' }}>{data.comment || ''}</div>
 
-            <div className="section-bar" style={{marginTop:'12px'}}>ส่วนที่ 4 : สรุปผลทดลองงานรอบนี้{round === 'day90' ? ' (รอบสุดท้าย)' : ''}</div>
-            <table className="form-table"><tbody>
-              <tr><td className="val">
-                <Cb checked={data.final_status === 'passed'} label="ผ่านทดลองงาน · บรรจุพนักงานประจำ" /> &nbsp;&nbsp;
-                <Cb checked={data.final_status === 'extended'} label="ทดลองงานต่อ" /> &nbsp;&nbsp;
-                <Cb checked={data.final_status === 'failed'} label="ไม่ผ่านทดลองงาน" />
-                {statusLabel && <div style={{ marginTop:'6px' }}><span style={{ display:'inline-block', padding:'4px 12px', borderRadius:4, background:`${statusColor}20`, color:statusColor, fontWeight:700, fontSize:'12px' }}>{statusLabel}</span></div>}
-              </td></tr>
-            </tbody></table>
+            {round === 'day90' && (
+              <>
+                <div className="section-bar" style={{marginTop:'12px'}}>ส่วนที่ 4 : สรุปผลทดลองงาน (รอบสุดท้าย)</div>
+                <table className="form-table"><tbody>
+                  <tr><td className="val">
+                    <Cb checked={data.final_status === 'passed'} label="ผ่านทดลองงาน · บรรจุพนักงานประจำ" /> &nbsp;&nbsp;&nbsp;&nbsp;
+                    <Cb checked={data.final_status === 'failed'} label="ไม่ผ่านทดลองงาน" />
+                    {statusLabel && <div style={{ marginTop:'6px' }}><span style={{ display:'inline-block', padding:'4px 12px', borderRadius:4, background:`${statusColor}20`, color:statusColor, fontWeight:700, fontSize:'12px' }}>{statusLabel}</span></div>}
+                  </td></tr>
+                </tbody></table>
+              </>
+            )}
 
             <div className="sig-grid" style={{ gridTemplateColumns:'1fr 1fr 1fr', marginTop:'14px' }}>
               <div className="sig-box" style={{ minHeight:'90px' }}>
@@ -3224,6 +3228,7 @@ ${HR_EMAIL}`;
       const [hrSigOpen, setHrSigOpen] = useState(false);
       const [hrSig, setHrSig] = useState(null);
       const [hrBusy, setHrBusy] = useState(false);
+      const isFinal = roundKey === 'day90';
       const finalLabel = (PROB_FINAL_OPTIONS.find(o => o.v === ev?.final_status) || {}).label;
       const doHrSign = async () => {
         setHrBusy(true);
@@ -3288,20 +3293,21 @@ ${HR_EMAIL}`;
               {/* ขั้นที่ 3: HR ลงนามรับรอง + ปิดรอบ (หลังพนักงานรับทราบ) */}
               {ev.acknowledged && !ev.hr_signed && (
                 <div className="border-t border-slate-100 pt-2 flex items-center justify-between gap-2 flex-wrap">
-                  <div className="text-[11px] text-emerald-700">✓ พนักงาน ({ev.employee_name || ev.employee_email}) รับทราบแล้ว · ผลรอบนี้: <b>{finalLabel || '—'}</b></div>
+                  <div className="text-[11px] text-emerald-700">✓ พนักงาน ({ev.employee_name || ev.employee_email}) รับทราบแล้ว{isFinal ? <> · ผลสรุป: <b>{finalLabel || '—'}</b></> : ' · พร้อมให้ HR ปิดรอบ'}</div>
                   <button type="button" onClick={() => setHrSigOpen(true)} className="text-xs bg-violet-600 hover:bg-violet-700 text-white px-3 py-1.5 rounded ibtn whitespace-nowrap">✍️ ลงนาม HR + ปิดรอบ</button>
                 </div>
               )}
               {ev.hr_signed && (
-                <div className="border-t border-slate-100 pt-2 text-[11px] text-violet-700">✓ ปิดรอบสมบูรณ์ · ลงนามครบ 3 ฝ่าย · ผล: <b>{finalLabel || '—'}</b>{ev.final_status === 'extended' ? ' → ไปรอบถัดไป' : ev.final_status === 'passed' ? ' → บรรจุพนักงานประจำ' : ' → ปิดกระบวนการ'}</div>
+                <div className="border-t border-slate-100 pt-2 text-[11px] text-violet-700">✓ ปิดรอบสมบูรณ์ · ลงนามครบ 3 ฝ่าย{isFinal ? (ev.final_status === 'passed' ? ' · ผลสรุป: ผ่านโปร → บรรจุพนักงานประจำ' : ' · ผลสรุป: ไม่ผ่านโปร → ปิดกระบวนการ') : ' → ไปประเมินรอบถัดไป'}</div>
               )}
 
               {hrSigOpen && (
                 <Modal title={`ลงนามรับรอง (HR) · Day ${day}`} subtitle={`${candidate.name || candidate.position} · ปิดรอบประเมิน`} onClose={() => setHrSigOpen(false)}>
                   <div className="space-y-3">
                     <div className="bg-violet-50 border border-violet-200 rounded-lg p-3 text-xs text-violet-800">
-                      ผลรอบนี้: <b>{finalLabel || '—'}</b> — ลงนามเพื่อรับรองและปิดรอบ
-                      {ev.final_status === 'passed' ? ' (ผ่านโปร · บรรจุพนักงานประจำ)' : ev.final_status === 'failed' ? ' (ไม่ผ่านโปร · ปิดกระบวนการ)' : ' (ไปประเมินรอบถัดไป)'}
+                      {isFinal
+                        ? <>ผลสรุป: <b>{finalLabel || '—'}</b> — ลงนามรับรองและปิดทดลองงาน{ev.final_status === 'passed' ? ' (ผ่านโปร · บรรจุพนักงานประจำ)' : ' (ไม่ผ่านโปร · ปิดกระบวนการ)'}</>
+                        : 'ลงนามรับรองปิดรอบนี้ → ไปประเมินรอบถัดไป'}
                     </div>
                     <SignaturePad onChange={setHrSig} />
                     <div className="flex justify-end gap-2">
