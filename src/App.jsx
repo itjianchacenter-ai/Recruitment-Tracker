@@ -4760,12 +4760,12 @@ ${HR_EMAIL}`;
 
           <main className="max-w-7xl mx-auto px-4 py-6 space-y-6">
             <div className="flex items-center gap-2 flex-wrap">
-              <div className="inline-flex bg-slate-100 rounded-xl p-1 text-sm">
-                <button onClick={() => setTab('pipeline')} className={`px-4 py-1.5 rounded-lg font-medium transition ${tab==='pipeline' ? 'bg-white shadow text-slate-900' : 'text-slate-500 hover:text-slate-700'}`}>📋 Pipeline</button>
-                <button onClick={() => setTab('reports')} className={`px-4 py-1.5 rounded-lg font-medium transition ${tab==='reports' ? 'bg-white shadow text-slate-900' : 'text-slate-500 hover:text-slate-700'}`}>📊 Reports / KPI</button>
-                <button onClick={() => setTab('history')} className={`px-4 py-1.5 rounded-lg font-medium transition ${tab==='history' ? 'bg-white shadow text-slate-900' : 'text-slate-500 hover:text-slate-700'}`}>🗂 ประวัติทดลองงาน</button>
+              <div className="flex items-center gap-2 text-sm flex-wrap">
+                <button onClick={() => setTab('pipeline')} className={`bg-white border rounded-xl px-4 py-1.5 font-medium ibtn ${tab==='pipeline' ? 'border-slate-300 shadow-sm text-slate-900' : 'border-slate-200 text-slate-500 hover:text-slate-700 hover:border-slate-300'}`}>📋 Pipeline</button>
+                <button onClick={() => setTab('reports')} className={`bg-white border rounded-xl px-4 py-1.5 font-medium ibtn ${tab==='reports' ? 'border-slate-300 shadow-sm text-slate-900' : 'border-slate-200 text-slate-500 hover:text-slate-700 hover:border-slate-300'}`}>📊 Reports / KPI</button>
+                <button onClick={() => setTab('history')} className={`bg-white border rounded-xl px-4 py-1.5 font-medium ibtn ${tab==='history' ? 'border-slate-300 shadow-sm text-slate-900' : 'border-slate-200 text-slate-500 hover:text-slate-700 hover:border-slate-300'}`}>🗂 ประวัติทดลองงาน</button>
+                <button onClick={() => setShowUsers(true)} className="bg-white border border-slate-200 hover:border-slate-300 rounded-xl px-4 py-1.5 font-medium text-slate-700 ibtn">👥 ผู้ใช้ & รหัสผ่าน</button>
               </div>
-              <button onClick={() => setShowUsers(true)} className="inline-flex items-center gap-1.5 bg-white border border-slate-200 hover:border-slate-300 text-slate-700 text-sm font-medium px-4 py-1.5 rounded-xl ibtn">👥 ผู้ใช้ & รหัสผ่าน</button>
             </div>
 
             {tab === 'reports' && <ReportsView candidates={candidates} />}
