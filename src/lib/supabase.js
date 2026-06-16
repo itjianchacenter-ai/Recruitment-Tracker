@@ -98,10 +98,10 @@ export async function deleteCandidate(id) {
 }
 
 // ---------- Branches Manning (staffing board per branch) -------------------
-export async function listBranches() {
-  const { data, error } = await supabase
-    .from('branches')
-    .select('*')
+export async function listBranches(kind) {
+  let qy = supabase.from('branches').select('*');
+  if (kind) qy = qy.eq('kind', kind);
+  const { data, error } = await qy
     .order('sort_order', { ascending: true })
     .order('name', { ascending: true });
   if (error) throw error;

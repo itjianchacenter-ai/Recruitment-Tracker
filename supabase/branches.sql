@@ -8,8 +8,9 @@
 
 create table if not exists public.branches (
   id          uuid primary key default gen_random_uuid(),
-  brand       text not null,                                   -- JIAN CHA / POLLY / JAI CHAN
-  name        text not null,                                   -- Central Lardprao
+  kind        text not null default 'branch',                  -- 'branch' (สาขา) | 'hq' (ฝ่าย HQ)
+  brand       text not null,                                   -- JIAN CHA / POLLY / JAI CHAN / ส่วนกลาง
+  name        text not null,                                   -- Central Lardprao / ฝ่ายการตลาด
   target_pax  int  not null default 0,
   sort_order  int  not null default 0,
   manning     jsonb not null default '{"sm":[],"asm":[],"staff":[]}'::jsonb,
@@ -18,6 +19,8 @@ create table if not exists public.branches (
   updated_at  timestamptz not null default now(),
   updated_by  text
 );
+-- for tables created before 'kind' existed:
+alter table public.branches add column if not exists kind text not null default 'branch';
 
 comment on column public.branches.manning is 'Staffing slots per role: {sm:[],asm:[],staff:[{name,nick,status,badge,join}]}';
 

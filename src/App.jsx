@@ -4764,6 +4764,7 @@ ${HR_EMAIL}`;
               <div className="flex items-center gap-2 text-sm flex-wrap">
                 <button onClick={() => setTab('pipeline')} className={`bg-white border rounded-xl px-4 py-1.5 font-medium ibtn ${tab==='pipeline' ? 'border-slate-300 shadow-sm text-slate-900' : 'border-slate-200 text-slate-500 hover:text-slate-700 hover:border-slate-300'}`}>📋 Pipeline</button>
                 <button onClick={() => setTab('branches')} className={`bg-white border rounded-xl px-4 py-1.5 font-medium ibtn ${tab==='branches' ? 'border-slate-300 shadow-sm text-slate-900' : 'border-slate-200 text-slate-500 hover:text-slate-700 hover:border-slate-300'}`}>🏬 Branches Manning</button>
+                <button onClick={() => setTab('hq')} className={`bg-white border rounded-xl px-4 py-1.5 font-medium ibtn ${tab==='hq' ? 'border-slate-300 shadow-sm text-slate-900' : 'border-slate-200 text-slate-500 hover:text-slate-700 hover:border-slate-300'}`}>🏢 HQ Manning</button>
                 <button onClick={() => setTab('reports')} className={`bg-white border rounded-xl px-4 py-1.5 font-medium ibtn ${tab==='reports' ? 'border-slate-300 shadow-sm text-slate-900' : 'border-slate-200 text-slate-500 hover:text-slate-700 hover:border-slate-300'}`}>📊 Reports / KPI</button>
                 <button onClick={() => setTab('history')} className={`bg-white border rounded-xl px-4 py-1.5 font-medium ibtn ${tab==='history' ? 'border-slate-300 shadow-sm text-slate-900' : 'border-slate-200 text-slate-500 hover:text-slate-700 hover:border-slate-300'}`}>🗂 ประวัติทดลองงาน</button>
                 <button onClick={() => setShowUsers(true)} className="bg-white border border-slate-200 hover:border-slate-300 rounded-xl px-4 py-1.5 font-medium text-slate-700 ibtn">👥 ผู้ใช้ & รหัสผ่าน</button>
@@ -4772,7 +4773,8 @@ ${HR_EMAIL}`;
 
             {tab === 'reports' && <ReportsView candidates={candidates} />}
             {tab === 'history' && <PassedProbationPanel candidates={candidates} />}
-            {tab === 'branches' && <BranchesManning />}
+            {tab === 'branches' && <BranchesManning cfg={MANNING_CFG.branch} />}
+            {tab === 'hq' && <BranchesManning cfg={MANNING_CFG.hq} />}
 
             {tab === 'pipeline' && (<>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -5796,6 +5798,11 @@ ${HR_EMAIL}`;
     const MANNING_BR_COLOR = { 'JIAN CHA': '#3D4F2D', 'POLLY': '#722443', 'JAI CHAN': '#185FA5' };
     const PRESET_BADGES = ['Full time', 'Part time', 'รักษาการ', 'Sat-Sun'];
     const emptyManning = () => ({ sm: [], asm: [], staff: [] });
+    // Config drives both boards from the same components: Branches (สาขา) and HQ (ฝ่าย).
+    const MANNING_CFG = {
+      branch: { kind: 'branch', icon: '🏬', title: 'Branches Manning', word: 'สาขา', groupLabel: 'แบรนด์', groups: MANNING_BRANDS, colors: MANNING_BR_COLOR, roles: [['sm', 'Store Manager'], ['asm', 'Assistant Manager'], ['staff', 'Staff']] },
+      hq: { kind: 'hq', icon: '🏢', title: 'HQ Manning', word: 'ฝ่าย', groupLabel: 'สังกัด', groups: ['ส่วนกลาง', ...MANNING_BRANDS], colors: { 'ส่วนกลาง': '#475569', ...MANNING_BR_COLOR }, roles: [['sm', 'หัวหน้าฝ่าย (Head)'], ['asm', 'ผู้จัดการ / รองฯ'], ['staff', 'เจ้าหน้าที่ (Staff)']] },
+    };
     function branchCounts(b) {
       const m = b.manning || {};
       const all = [...(m.sm || []), ...(m.asm || []), ...(m.staff || [])];
@@ -5823,7 +5830,7 @@ ${HR_EMAIL}`;
       );
     }
 
-    function BranchCard({ b, onEditSlot, onEdit, onRemove }) {
+    function BranchCard({ b, cfg, onEditSlot, onEdit, onRemove }) {
       const c = branchCounts(b);
       const full = c.total > 0 && c.filled === c.total;   // ทุกช่องมีคน (ไม่มี Hold/Vacant)
       const m = b.manning || {};
@@ -5836,11 +5843,11 @@ ${HR_EMAIL}`;
           ? <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-100 text-slate-500 whitespace-nowrap">ยังไม่มีช่อง</span>
           : <span className={`text-[10px] px-2 py-0.5 rounded-full whitespace-nowrap ${c.vac ? 'bg-rose-100 text-rose-700' : 'bg-amber-100 text-amber-800'}`}>{gapParts.join(' · ')}</span>;
       const pct = c.total ? Math.round(c.filled / c.total * 100) : 0;
-      const color = MANNING_BR_COLOR[b.brand] || '#475569';
+      const color = cfg.colors[b.brand] || '#475569';
       const role = (title, key) => {
         const arr = m[key] || [];
         return (
-          <div className="mt-2">
+          <div key={key} className="mt-2">
             <div className="flex items-center justify-between">
               <div className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide">{title}{key === 'staff' ? ` (${arr.filter(s => s.status === 'filled' && s.name).length}/${arr.length})` : ''}</div>
               <button type="button" onClick={() => onEditSlot(key, -1)} className="text-[10px] text-slate-400 hover:text-slate-700">+ ช่อง</button>
@@ -5854,15 +5861,13 @@ ${HR_EMAIL}`;
           <div style={{ background: color }} className="text-white px-3 py-2">
             <div className="flex items-center justify-between gap-2">
               <span className="text-sm font-medium truncate">{b.name}</span>
-              <div className="flex items-center gap-1.5">{pill}<button type="button" onClick={onEdit} className="text-white/70 hover:text-white text-xs" title="แก้ไขสาขา">✎</button><button type="button" onClick={onRemove} className="text-white/70 hover:text-white text-xs" title="ลบสาขา">✕</button></div>
+              <div className="flex items-center gap-1.5">{pill}<button type="button" onClick={onEdit} className="text-white/70 hover:text-white text-xs" title={`แก้ไข${cfg.word}`}>✎</button><button type="button" onClick={onRemove} className="text-white/70 hover:text-white text-xs" title={`ลบ${cfg.word}`}>✕</button></div>
             </div>
             <div className="text-[10px] opacity-85 mt-0.5">{b.brand} · Manning {c.filled}/{c.total} pax</div>
             <div className="h-1 bg-white/25 rounded-full mt-1.5"><div className="h-full bg-white rounded-full" style={{ width: pct + '%' }} /></div>
           </div>
           <div className="px-2.5 py-2">
-            {role('Store Manager', 'sm')}
-            {role('Assistant Manager', 'asm')}
-            {role('Staff', 'staff')}
+            {cfg.roles.map(([key, label]) => role(label, key))}
           </div>
         </div>
       );
@@ -5919,25 +5924,26 @@ ${HR_EMAIL}`;
       );
     }
 
-    function BranchFormModal({ initial, onClose, onSave }) {
+    function BranchFormModal({ cfg, initial, onClose, onSave }) {
       const editing = !!initial;
-      const [form, setForm] = useState(initial ?? { brand: 'JIAN CHA', name: '', target_pax: '' });
+      const [form, setForm] = useState(initial ?? { brand: cfg.groups[0], name: '', target_pax: '' });
       const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
-      const submit = (e) => { e.preventDefault(); if (!String(form.name).trim()) { showToast('กรอกชื่อสาขา', 'warning'); return; } onSave(form); };
+      const submit = (e) => { e.preventDefault(); if (!String(form.name).trim()) { showToast(`กรอกชื่อ${cfg.word}`, 'warning'); return; } onSave(form); };
       return (
-        <Modal title={editing ? 'แก้ไขสาขา' : 'เพิ่มสาขา'} subtitle="Branches Manning" onClose={onClose}>
+        <Modal title={editing ? `แก้ไข${cfg.word}` : `เพิ่ม${cfg.word}`} subtitle={cfg.title} onClose={onClose}>
           <form onSubmit={submit} className="space-y-3">
-            <Field label="แบรนด์" required><select className="input" value={form.brand} onChange={e => set('brand', e.target.value)}>{MANNING_BRANDS.map(b => <option key={b}>{b}</option>)}</select></Field>
-            <Field label="ชื่อสาขา" required><input className="input" value={form.name} onChange={e => set('name', e.target.value)} placeholder="เช่น Central Lardprao" autoFocus /></Field>
-            {!editing && <Field label="จำนวนช่อง Staff เริ่มต้น"><input type="number" className="input" value={form.target_pax} onChange={e => set('target_pax', e.target.value)} placeholder="เช่น 13 (เพิ่ม/ลบทีหลังได้)" /></Field>}
-            {editing && <div className="text-[11px] text-slate-500 bg-slate-50 rounded-lg p-2.5">💡 จำนวนช่อง (manning total) ปรับได้ที่การ์ดสาขาโดยตรง — กด "+ ช่อง" เพิ่ม หรือกดช่องเพื่อลบ</div>}
-            <div className="flex justify-end gap-2 pt-1"><button type="button" onClick={onClose} className="px-3 py-2 text-sm text-slate-600 hover:text-slate-900">ยกเลิก</button><button type="submit" className="px-4 py-2 text-sm bg-slate-900 hover:bg-slate-800 text-white rounded-lg ibtn">{editing ? 'บันทึก' : 'เพิ่มสาขา'}</button></div>
+            <Field label={cfg.groupLabel} required><select className="input" value={form.brand} onChange={e => set('brand', e.target.value)}>{cfg.groups.map(b => <option key={b}>{b}</option>)}</select></Field>
+            <Field label={`ชื่อ${cfg.word}`} required><input className="input" value={form.name} onChange={e => set('name', e.target.value)} placeholder={cfg.kind === 'hq' ? 'เช่น ฝ่ายการตลาด, ฝ่ายบัญชี' : 'เช่น Central Lardprao'} autoFocus /></Field>
+            {!editing && <Field label="จำนวนช่องเริ่มต้น"><input type="number" className="input" value={form.target_pax} onChange={e => set('target_pax', e.target.value)} placeholder="เช่น 10 (เพิ่ม/ลบทีหลังได้)" /></Field>}
+            {editing && <div className="text-[11px] text-slate-500 bg-slate-50 rounded-lg p-2.5">💡 จำนวนช่อง (manning total) ปรับได้ที่การ์ด{cfg.word}โดยตรง — กด "+ ช่อง" เพิ่ม หรือกดช่องเพื่อลบ</div>}
+            <div className="flex justify-end gap-2 pt-1"><button type="button" onClick={onClose} className="px-3 py-2 text-sm text-slate-600 hover:text-slate-900">ยกเลิก</button><button type="submit" className="px-4 py-2 text-sm bg-slate-900 hover:bg-slate-800 text-white rounded-lg ibtn">{editing ? 'บันทึก' : `เพิ่ม${cfg.word}`}</button></div>
           </form>
         </Modal>
       );
     }
 
-    function BranchesManning() {
+    function BranchesManning({ cfg }) {
+      const W = cfg.word;
       const [branches, setBranches] = useState(null);   // null = loading
       const [err, setErr] = useState('');
       const [brand, setBrand] = useState('ทั้งหมด');
@@ -5949,7 +5955,7 @@ ${HR_EMAIL}`;
       const [showAdd, setShowAdd] = useState(false);
       const [editBranch, setEditBranch] = useState(null);  // branch being renamed/retargeted
 
-      useEffect(() => { listBranches().then(b => { setBranches(b); setErr(''); }).catch(e => { setErr(e?.message || String(e)); setBranches([]); }); }, []);
+      useEffect(() => { listBranches(cfg.kind).then(b => { setBranches(b); setErr(''); }).catch(e => { setErr(e?.message || String(e)); setBranches([]); }); }, [cfg.kind]);
 
       const persistManning = (id, manning) => {
         setBranches(prev => prev.map(b => b.id === id ? { ...b, manning } : b));
@@ -5974,12 +5980,12 @@ ${HR_EMAIL}`;
       const addBranch = (form) => {
         const n = Math.max(0, Number(form.target_pax) || 0);
         const manning = { sm: [], asm: [], staff: Array.from({ length: n }, () => ({ status: 'hold' })) };
-        createBranch({ brand: form.brand, name: form.name.trim(), target_pax: n, sort_order: (branches?.length || 0) + 1, manning })
-          .then(row => { setBranches(prev => [...(prev || []), row]); setShowAdd(false); showToast(`เพิ่มสาขา ${form.name} แล้ว`, 'success'); })
-          .catch(e => showToast('เพิ่มสาขาไม่สำเร็จ: ' + (e?.message || ''), 'warning'));
+        createBranch({ brand: form.brand, name: form.name.trim(), target_pax: n, sort_order: (branches?.length || 0) + 1, manning, kind: cfg.kind })
+          .then(row => { setBranches(prev => [...(prev || []), row]); setShowAdd(false); showToast(`เพิ่ม${W} ${form.name} แล้ว`, 'success'); })
+          .catch(e => showToast(`เพิ่ม${W}ไม่สำเร็จ: ` + (e?.message || ''), 'warning'));
       };
       const removeBranch = (b) => {
-        if (!confirm(`ลบสาขา "${b.name}"?\nข้อมูลกำลังคนของสาขานี้จะหายทั้งหมด`)) return;
+        if (!confirm(`ลบ${W} "${b.name}"?\nข้อมูลกำลังคนของ${W}นี้จะหายทั้งหมด`)) return;
         deleteBranch(b.id).then(() => setBranches(prev => prev.filter(x => x.id !== b.id))).catch(e => showToast('ลบไม่สำเร็จ: ' + (e?.message || ''), 'warning'));
       };
       const saveBranchInfo = (form) => {
@@ -5987,10 +5993,10 @@ ${HR_EMAIL}`;
         setBranches(prev => prev.map(b => b.id === editBranch.id ? { ...b, ...patch } : b));
         updateBranch(editBranch.id, patch).catch(e => showToast('บันทึกไม่สำเร็จ: ' + (e?.message || ''), 'warning'));
         setEditBranch(null);
-        showToast('แก้ไขข้อมูลสาขาแล้ว', 'success');
+        showToast(`แก้ไขข้อมูล${W}แล้ว`, 'success');
       };
 
-      if (branches === null) return <div className="text-center text-slate-400 text-sm py-16">กำลังโหลดข้อมูลสาขา…</div>;
+      if (branches === null) return <div className="text-center text-slate-400 text-sm py-16">กำลังโหลดข้อมูล{W}…</div>;
 
       const pickerList = branches.filter(b => !q.trim() || (b.name || '').toLowerCase().includes(q.trim().toLowerCase()));
       const list = branches
@@ -6002,39 +6008,39 @@ ${HR_EMAIL}`;
       return (
         <div>
           <div className="flex items-center justify-between gap-2 flex-wrap mb-3">
-            <h2 className="text-base font-semibold text-slate-900">🏬 Branches Manning <span className="text-xs font-normal text-slate-400">· กำลังคนรายสาขา</span></h2>
+            <h2 className="text-base font-semibold text-slate-900">{cfg.icon} {cfg.title} <span className="text-xs font-normal text-slate-400">· กำลังคนราย{W}</span></h2>
             <div className="flex items-center gap-3">
-              <label className="text-xs text-slate-600 flex items-center gap-1.5 cursor-pointer"><input type="checkbox" checked={gapOnly} onChange={e => setGapOnly(e.target.checked)} /> เฉพาะสาขาที่ขาดคน</label>
-              <button onClick={() => setShowAdd(true)} className="text-sm bg-slate-900 hover:bg-slate-800 text-white px-3 py-1.5 rounded-lg ibtn">+ เพิ่มสาขา</button>
+              <label className="text-xs text-slate-600 flex items-center gap-1.5 cursor-pointer"><input type="checkbox" checked={gapOnly} onChange={e => setGapOnly(e.target.checked)} /> เฉพาะ{W}ที่ขาดคน</label>
+              <button onClick={() => setShowAdd(true)} className="text-sm bg-slate-900 hover:bg-slate-800 text-white px-3 py-1.5 rounded-lg ibtn">+ เพิ่ม{W}</button>
             </div>
           </div>
 
-          {err && <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 mb-3 text-xs text-amber-800">⚠️ ใช้งานข้อมูลสาขาไม่ได้: {err} · ตรวจว่ารัน <b>supabase/branches.sql</b> บน Supabase แล้ว</div>}
+          {err && <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 mb-3 text-xs text-amber-800">⚠️ ใช้งานข้อมูล{W}ไม่ได้: {err} · ตรวจว่ารัน <b>supabase/branches.sql</b> บน Supabase แล้ว</div>}
 
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-3">
-            {[['สาขา', branches.length, 'text-slate-900'], ['กำลังคน', `${tot.f}/${tot.t}`, 'text-emerald-700'], ['Hold', tot.h, 'text-amber-700'], ['Vacant', tot.v, 'text-rose-700']].map(s => (
+            {[[W, branches.length, 'text-slate-900'], ['กำลังคน', `${tot.f}/${tot.t}`, 'text-emerald-700'], ['Hold', tot.h, 'text-amber-700'], ['Vacant', tot.v, 'text-rose-700']].map(s => (
               <div key={s[0]} className="bg-slate-50 rounded-lg px-3 py-2"><div className="text-[11px] text-slate-500">{s[0]}</div><div className={`text-lg font-semibold ${s[2]}`}>{s[1]}</div></div>
             ))}
           </div>
 
           <div className="flex items-center gap-2 flex-wrap mb-2">
-            {['ทั้งหมด', ...MANNING_BRANDS].map(br => {
+            {['ทั้งหมด', ...cfg.groups].map(br => {
               const n = br === 'ทั้งหมด' ? branches.length : branches.filter(b => b.brand === br).length;
               return <button key={br} onClick={() => setBrand(br)} className={`text-xs px-3 py-1 rounded-lg border ibtn ${brand === br ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'}`}>{br} ({n})</button>;
             })}
-            <button onClick={() => setPickerOpen(o => !o)} className={`text-xs px-3 py-1 rounded-lg border ibtn ${selectedIds.size ? 'bg-violet-600 text-white border-violet-600' : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'}`}>📍 เลือกสาขา ({selectedIds.size}) {pickerOpen ? '▲' : '▼'}</button>
+            <button onClick={() => setPickerOpen(o => !o)} className={`text-xs px-3 py-1 rounded-lg border ibtn ${selectedIds.size ? 'bg-violet-600 text-white border-violet-600' : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'}`}>📍 เลือก{W} ({selectedIds.size}) {pickerOpen ? '▲' : '▼'}</button>
             {(selectedIds.size > 0 || brand !== 'ทั้งหมด' || gapOnly) && <button onClick={() => { setSelectedIds(new Set()); setBrand('ทั้งหมด'); setGapOnly(false); }} className="text-xs text-slate-500 hover:text-slate-900 px-2">ล้างตัวกรอง</button>}
           </div>
 
           {pickerOpen && (
             <div className="bg-white border border-slate-200 rounded-xl p-3 mb-3">
               <div className="flex items-center gap-2 mb-2 flex-wrap">
-                <div className="relative flex-1 min-w-[160px]"><span className="absolute left-2.5 top-1.5 text-slate-400">🔍</span><input value={q} onChange={e => setQ(e.target.value)} placeholder="ค้นหาสาขาในรายการ…" className="w-full text-sm border border-slate-200 rounded-lg pl-8 pr-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-slate-300" /></div>
+                <div className="relative flex-1 min-w-[160px]"><span className="absolute left-2.5 top-1.5 text-slate-400">🔍</span><input value={q} onChange={e => setQ(e.target.value)} placeholder={`ค้นหา${W}ในรายการ…`} className="w-full text-sm border border-slate-200 rounded-lg pl-8 pr-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-slate-300" /></div>
                 <button type="button" onClick={() => setSelectedIds(new Set(pickerList.map(b => b.id)))} className="text-xs px-2.5 py-1.5 rounded-lg border border-slate-200 hover:border-slate-300">เลือกทั้งหมด{q ? ' (ที่ค้นหา)' : ''}</button>
                 <button type="button" onClick={() => setSelectedIds(new Set())} className="text-xs px-2.5 py-1.5 rounded-lg border border-slate-200 hover:border-slate-300">ล้าง</button>
               </div>
               <div className="divide-y divide-slate-100 max-h-64 overflow-y-auto border border-slate-100 rounded-lg">
-                {pickerList.length === 0 ? <div className="text-xs text-slate-400 text-center py-4">ไม่พบสาขา</div> : pickerList.map(b => {
+                {pickerList.length === 0 ? <div className="text-xs text-slate-400 text-center py-4">ไม่พบ{W}</div> : pickerList.map(b => {
                   const c = branchCounts(b);
                   return (
                     <label key={b.id} className="flex items-center gap-2 px-2.5 py-1.5 text-xs cursor-pointer hover:bg-slate-50">
@@ -6046,7 +6052,7 @@ ${HR_EMAIL}`;
                   );
                 })}
               </div>
-              <div className="text-[10px] text-slate-400 mt-1.5">เลือกไว้ {selectedIds.size} สาขา · ไม่เลือก = แสดงทุกสาขา</div>
+              <div className="text-[10px] text-slate-400 mt-1.5">เลือกไว้ {selectedIds.size} {W} · ไม่เลือก = แสดงทุก{W}</div>
             </div>
           )}
 
@@ -6057,19 +6063,19 @@ ${HR_EMAIL}`;
             </div>
           )}
 
-          {(selectedIds.size > 0 || brand !== 'ทั้งหมด' || gapOnly) && <div className="text-[11px] text-slate-500 mb-2">แสดง {list.length}/{branches.length} สาขา</div>}
+          {(selectedIds.size > 0 || brand !== 'ทั้งหมด' || gapOnly) && <div className="text-[11px] text-slate-500 mb-2">แสดง {list.length}/{branches.length} {W}</div>}
 
           {list.length === 0 ? (
-            <div className="bg-white border border-dashed border-slate-300 rounded-xl p-10 text-center text-slate-500 text-sm">{branches.length === 0 ? 'ยังไม่มีสาขา · กด "+ เพิ่มสาขา"' : 'ไม่มีสาขาตามตัวกรอง'}</div>
+            <div className="bg-white border border-dashed border-slate-300 rounded-xl p-10 text-center text-slate-500 text-sm">{branches.length === 0 ? `ยังไม่มี${W} · กด "+ เพิ่ม${W}"` : `ไม่มี${W}ตามตัวกรอง`}</div>
           ) : (
             <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))' }}>
-              {list.map(b => <BranchCard key={b.id} b={b} onEditSlot={(role, index) => setEdit({ branch: b, role, index })} onEdit={() => setEditBranch(b)} onRemove={() => removeBranch(b)} />)}
+              {list.map(b => <BranchCard key={b.id} b={b} cfg={cfg} onEditSlot={(role, index) => setEdit({ branch: b, role, index })} onEdit={() => setEditBranch(b)} onRemove={() => removeBranch(b)} />)}
             </div>
           )}
 
           {edit && <SlotEditorModal slot={edit.index >= 0 ? (edit.branch.manning?.[edit.role] || [])[edit.index] : null} onClose={() => setEdit(null)} onSave={saveSlot} onRemove={edit.index >= 0 ? removeSlot : null} />}
-          {showAdd && <BranchFormModal onClose={() => setShowAdd(false)} onSave={addBranch} />}
-          {editBranch && <BranchFormModal initial={{ brand: editBranch.brand, name: editBranch.name, target_pax: editBranch.target_pax }} onClose={() => setEditBranch(null)} onSave={saveBranchInfo} />}
+          {showAdd && <BranchFormModal cfg={cfg} onClose={() => setShowAdd(false)} onSave={addBranch} />}
+          {editBranch && <BranchFormModal cfg={cfg} initial={{ brand: editBranch.brand, name: editBranch.name, target_pax: editBranch.target_pax }} onClose={() => setEditBranch(null)} onSave={saveBranchInfo} />}
         </div>
       );
     }

@@ -65,7 +65,13 @@ const _branches = [
     asm:[{name:'Naing Tun Oo',nick:'อเล็กซ์',status:'filled',badge:'รักษาการ'},{name:'นภสร พึ่งช่วย',nick:'กุหลาย',status:'filled',badge:'รักษาการ'}],
     staff:[{name:'AUNG ZIN HTWE',nick:'อ่าว',status:'filled',badge:'Full time'},{name:'ชัยสิทธิ์ ดำนวณ',nick:'บูรา',status:'filled',badge:'Part time'},{name:'วรัญชญา ยมนา',nick:'มะยม',status:'filled',badge:'Sat-Sun'},{name:'สายรุ้ง จันทวง',status:'filled',badge:'Full time',join:'2026-07-01',last:'2026-09-30'},{status:'hold'},{status:'hold'}] } },
 ];
-async function listBranches(){ return JSON.parse(JSON.stringify(_branches)); }
+_branches.forEach(b => { if(!b.kind) b.kind='branch'; });
+[
+  { id:'h1', kind:'hq', brand:'ส่วนกลาง', name:'ฝ่ายทรัพยากรบุคคล (HR)', target_pax:0, sort_order:1, manning:{ sm:[{name:'ทัศนาวรรณ นาคุ',nick:'หญิง',status:'filled',badge:'Full time'}], asm:[{name:'ศุภากิจ สายโน',nick:'แก้ว',status:'filled',badge:'Full time'}], staff:[{name:'สมหญิง รักงาน',status:'filled',badge:'Full time'},{status:'hold'}] } },
+  { id:'h2', kind:'hq', brand:'ส่วนกลาง', name:'ฝ่ายการเงิน-บัญชี', target_pax:0, sort_order:2, manning:{ sm:[{name:'วิเชียร พงศ์เจริญ',status:'filled',badge:'Full time'}], asm:[{status:'hold'}], staff:[{name:'อารยา ตั้งใจ',status:'filled',badge:'Full time'},{status:'vacant'}] } },
+  { id:'h3', kind:'hq', brand:'JIAN CHA', name:'ฝ่ายการตลาด', target_pax:0, sort_order:3, manning:{ sm:[{status:'hold'}], asm:[], staff:[{name:'จิติยากร อ่อนสัมฤทธิ์',status:'filled',badge:'Full time'},{status:'hold'},{status:'hold'}] } },
+].forEach(b => _branches.push(b));
+async function listBranches(kind){ return JSON.parse(JSON.stringify(_branches.filter(b => !kind || (b.kind||'branch')===kind))); }
 async function createBranch(p){ const b={ id:'b'+(++_seq), created_at:_nowIso(), updated_at:_nowIso(), ...p }; _branches.push(b); return JSON.parse(JSON.stringify(b)); }
 async function updateBranch(id, patch){ const i=_branches.findIndex(b=>b.id===id); if(i>=0) _branches[i]={ ..._branches[i], ...patch, id }; return _branches[i]; }
 async function deleteBranch(id){ const i=_branches.findIndex(b=>b.id===id); if(i>=0) _branches.splice(i,1); }
