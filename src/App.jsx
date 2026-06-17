@@ -3218,7 +3218,7 @@ ${HR_EMAIL}`;
     }
 
     // Admin: one row per round (create + assign evaluator + status)
-    function ProbRoundRow({ candidate, roundKey, day, label, ev, daysInProbation, onCreate, onViewDoc, onSendToEmployee, onHrSign }) {
+    function ProbRoundRow({ candidate, roundKey, day, label, deadline, ev, daysInProbation, onCreate, onViewDoc, onSendToEmployee, onHrSign }) {
       const [name, setName] = useState('');
       const [email, setEmail] = useState('');
       const [busy, setBusy] = useState(false);
@@ -3253,9 +3253,16 @@ ${HR_EMAIL}`;
       };
       return (
         <div className="border border-slate-200 rounded-lg p-3 bg-white">
-          <div className="flex items-center justify-between gap-2 mb-1">
+          <div className="flex items-center justify-between gap-2 mb-1 flex-wrap">
             <div className="text-xs font-semibold text-slate-800">📋 {label} · Day {day}</div>
-            {!reached && !ev && <span className="text-[10px] text-slate-400">ยังไม่ถึงรอบ (อีก {day - daysInProbation} วัน) · สร้างล่วงหน้าได้</span>}
+            {!reached && !ev && !deadline && <span className="text-[10px] text-slate-400">ยังไม่ถึงรอบ (อีก {day - daysInProbation} วัน) · สร้างล่วงหน้าได้</span>}
+            {deadline && !ev?.hr_signed && (() => {
+              const start = candidate.probation?.startDate;
+              const lastDate = start ? addDays(start, deadline) : null;
+              const left = deadline - daysInProbation;   // นับถอยหลังถึงวันสุดท้าย (Day 89)
+              const tone = left <= 0 ? 'text-rose-600 font-semibold' : left <= 7 ? 'text-amber-600 font-medium' : 'text-slate-500';
+              return <span className={`text-[10px] ${tone}`}>⏳ วันสุดท้ายประเมิน (Day {deadline}){lastDate ? ` · ${fmtDate(lastDate)}` : ''} · {left > 0 ? `เหลืออีก ${left} วัน` : left === 0 ? 'วันสุดท้ายวันนี้!' : `⚠️ เลยกำหนด ${-left} วัน`}</span>;
+            })()}
           </div>
           {!ev ? (
             <div className="grid items-center gap-2" style={{ gridTemplateColumns:'1fr 1fr auto' }}>
@@ -3328,12 +3335,12 @@ ${HR_EMAIL}`;
       const rounds = [
         { key:'day30', day:30, label:'รอบที่ 1' },
         { key:'day60', day:60, label:'รอบที่ 2' },
-        { key:'day90', day:90, label:'รอบที่ 3 (สุดท้าย)' },
+        { key:'day90', day:90, label:'รอบที่ 3 (สุดท้าย)', deadline:89 },   // ต้องประเมินให้เสร็จภายในวันที่ 89 (กันหลุด)
       ];
       return (
         <div className="space-y-2">
           {rounds.map(r => (
-            <ProbRoundRow key={r.key} candidate={candidate} roundKey={r.key} day={r.day} label={r.label}
+            <ProbRoundRow key={r.key} candidate={candidate} roundKey={r.key} day={r.day} label={r.label} deadline={r.deadline}
               ev={evals[r.key]} daysInProbation={daysInProbation} onCreate={onCreate} onViewDoc={onViewDoc} onSendToEmployee={onSendToEmployee} onHrSign={onHrSign} />
           ))}
         </div>
