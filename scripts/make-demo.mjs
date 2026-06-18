@@ -52,6 +52,7 @@ function getActor(){ return actorFromSession(_session); }
 async function adminListUsers(){ return _users.map(u=>({ ...u })); }
 async function adminCreateUser(p){ const u={ id:'u'+(++_seq), email:p.email, name:p.name, dept:p.dept, role:p.role||'user', level:p.level||2, hasPassword:true }; _users.push(u); return u; }
 async function adminResetPassword(){ return { ok:true }; }
+async function adminSetLevel(p){ const i=_users.findIndex(u=>u.email===p.email||u.id===p.id); if(i>=0) _users[i].level = Number(p.level)===1?1:2; return { ok:true, level:_users[i] && _users[i].level }; }
 async function adminDeleteUser(p){ const i=_users.findIndex(u=>u.email===p.email); if(i>=0) _users.splice(i,1); return { ok:true }; }
 async function findUnregisteredEmails(){ return []; }
 async function getClientIp(){ return '127.0.0.1'; }

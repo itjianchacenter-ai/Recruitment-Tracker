@@ -4,7 +4,7 @@ import {
   listCandidates, createCandidate, updateCandidate, deleteCandidate,
   subscribeCandidates, signIn, signOut, getSession, onAuthChange,
   actorFromSession, roleFromSession, levelFromSession, usernameToEmail,
-  adminListUsers, adminCreateUser, adminResetPassword, adminDeleteUser,
+  adminListUsers, adminCreateUser, adminResetPassword, adminDeleteUser, adminSetLevel,
   findUnregisteredEmails, getClientIp, uploadFile, getSignedUrl,
   listBranches, createBranch, updateBranch, deleteBranch,
   listAtsPositions, createAtsPosition, listAtsSources, createAtsSource,
@@ -4400,6 +4400,17 @@ ${HR_EMAIL}`;
           showToast('สร้างไม่สำเร็จ: ' + (e?.message || e), 'warning');
         } finally { setBusy(false); }
       };
+      const changeLevel = async (a) => {
+        const next = (a.level || 2) >= 2 ? 1 : 2;
+        if (!confirm(`เปลี่ยน "${a.name || a.email}" เป็น Admin Level ${next}${next === 1 ? ' (อ่านอย่างเดียว)' : ' (แก้ไขได้ทุกอย่าง)'} ?`)) return;
+        setBusy(true);
+        try {
+          await adminSetLevel({ id: a.id, email: a.email, level: next });
+          setAccounts(list => list.map(x => x.email === a.email ? { ...x, level: next } : x));
+          showToast(`✓ เปลี่ยนเป็น Level ${next} แล้ว · มีผลเมื่อ user login ครั้งถัดไป`, 'success');
+        } catch (e) { showToast('เปลี่ยน level ไม่สำเร็จ: ' + (e?.message || e), 'warning'); }
+        finally { setBusy(false); }
+      };
       const removeUser = async (email) => {
         const a = accounts.find(x => x.email === email);
         if (!a) return;
@@ -4472,6 +4483,7 @@ ${HR_EMAIL}`;
                         : <span className="text-amber-600">ยังไม่มีรหัส</span>}
                   </div>
                 </div>
+                {a.role === 'admin' && <button onClick={() => changeLevel(a)} disabled={busy} title="สลับสิทธิ์ Level 1/2" className={`text-xs px-2.5 py-1 rounded whitespace-nowrap shrink-0 disabled:opacity-50 border ${(a.level||2)>=2 ? 'bg-indigo-50 border-indigo-200 text-indigo-700 hover:bg-indigo-100' : 'bg-amber-50 border-amber-200 text-amber-700 hover:bg-amber-100'}`}>{(a.level||2)>=2 ? '→ L1' : '→ L2'}</button>}
                 <button onClick={() => issue(a.email)} disabled={busy} className={`text-xs px-2.5 py-1 rounded whitespace-nowrap shrink-0 disabled:opacity-50 ${a.hasPassword ? 'bg-white border border-slate-300 text-slate-700 hover:bg-slate-50' : 'bg-slate-900 hover:bg-slate-800 text-white'}`}>{a.hasPassword ? 'รีเซ็ต' : 'สร้างรหัส'}</button>
                 <button onClick={() => removeUser(a.email)} disabled={busy} title="ลบผู้ใช้ออกจากระบบ" className="text-xs px-2.5 py-1 rounded whitespace-nowrap shrink-0 bg-white border border-rose-200 text-rose-600 hover:bg-rose-50 disabled:opacity-50">🗑️ ลบ</button>
               </div>

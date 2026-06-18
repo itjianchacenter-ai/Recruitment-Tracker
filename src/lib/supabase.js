@@ -297,6 +297,9 @@ export async function adminCreateUser({ email, password, name, dept, role, level
 export async function adminResetPassword({ id, email, password }) {
   return invokeAdminUsers('reset-password', { id, email, password });
 }
+export async function adminSetLevel({ id, email, level }) {
+  return invokeAdminUsers('set-level', { id, email, level });
+}
 export async function adminDeleteUser({ id, email }) {
   return invokeAdminUsers('delete', { id, email });
 }

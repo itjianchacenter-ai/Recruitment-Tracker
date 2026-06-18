@@ -21,9 +21,10 @@
 //   so trusting it for authz would let a 'user' self-promote to admin.
 //
 // REQUEST BODY (JSON): { action, ...payload }
-//   action 'list'            -> { }
-//   action 'create'          -> { email, password, name?, dept?, role? }
+//   action 'list'            -> { }   (returns role + level per user)
+//   action 'create'          -> { email, password, name?, dept?, role?, level? }
 //   action 'reset-password'  -> { id?|email?, password }
+//   action 'set-level'       -> { id?|email?, level }   (1 = read-only · 2 = full)
 //   action 'delete'          -> { id?|email? }
 // =====================================================================
 
@@ -89,6 +90,7 @@ serve(async (req) => {
         name: (u.user_metadata?.name as string) ?? '',
         dept: (u.user_metadata?.dept as string) ?? '',
         role: ((u.app_metadata?.role ?? u.user_metadata?.role) === 'user') ? 'user' : 'admin',
+        level: Number(u.app_metadata?.level) === 1 ? 1 : 2,   // 2 = full · 1 = read-only (default 2)
         hasPassword: true,
         created_at: u.created_at,
       }));
@@ -96,14 +98,15 @@ serve(async (req) => {
     }
 
     if (action === 'create') {
-      const { email, password, name = '', dept = '', role = 'user' } = p;
+      const { email, password, name = '', dept = '', role = 'user', level } = p;
       if (!email || !password) return json({ error: 'email + password required' }, 400);
       const { data, error } = await admin.auth.admin.createUser({
         email,
         password,
         email_confirm: true, // auto-confirm: usable immediately, no email link
         user_metadata: { name, dept },
-        app_metadata: { role: role === 'admin' ? 'admin' : 'user' },
+        // level: 2 = full (แก้ไขได้ทุกอย่าง) · 1 = read-only · default 2
+        app_metadata: { role: role === 'admin' ? 'admin' : 'user', level: Number(level) === 1 ? 1 : 2 },
       });
       if (error) throw error;
       return json({ ok: true, id: data.user?.id, email });
@@ -117,6 +120,17 @@ serve(async (req) => {
       const { error } = await admin.auth.admin.updateUserById(id, { password });
       if (error) throw error;
       return json({ ok: true, id });
+    }
+
+    if (action === 'set-level') {
+      let { id, email, level } = p;
+      if (!id && email) id = await findIdByEmail(admin, email);
+      if (!id) return json({ error: 'user not found' }, 404);
+      const lv = Number(level) === 1 ? 1 : 2;
+      // app_metadata keys are MERGED by Supabase → role + อื่น ๆ คงไว้, set แค่ level
+      const { error } = await admin.auth.admin.updateUserById(id, { app_metadata: { level: lv } });
+      if (error) throw error;
+      return json({ ok: true, id, level: lv });
     }
 
     if (action === 'delete') {
