@@ -1,0 +1,373 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Employee Database · Preview</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  body{font-family:'Noto Sans Thai',system-ui,sans-serif;background:#f1f5f9;margin:0;padding:16px}
+  th,td{white-space:nowrap}
+  thead th{position:sticky;top:0;z-index:1}
+  .scrollbox::-webkit-scrollbar{height:10px}
+  .scrollbox::-webkit-scrollbar-thumb{background:#cbd5e1;border-radius:6px}
+</style>
+</head>
+<body>
+<div class="max-w-[1500px] mx-auto">
+  <div class="flex items-center justify-between gap-3 flex-wrap mb-3">
+    <div>
+      <h1 class="text-lg font-semibold text-slate-900">🧑‍💼 Employee Database <span class="text-xs font-normal text-slate-400">· ทะเบียนพนักงาน</span></h1>
+      <div id="sub" class="text-xs text-slate-500 mt-0.5"></div>
+    </div>
+    <button id="addBtn" class="text-sm bg-slate-900 hover:bg-slate-800 text-white px-3 py-1.5 rounded-lg">＋ เพิ่มพนักงาน</button>
+  </div>
+
+  <div class="flex gap-2 mb-3">
+    <button id="tab-active" class="text-sm px-4 py-2 rounded-xl border font-medium transition">👥 พนักงานปัจจุบัน</button>
+    <button id="tab-resign" class="text-sm px-4 py-2 rounded-xl border font-medium transition">📤 ลาออก (Resign)</button>
+  </div>
+
+  <div class="bg-white rounded-xl border border-slate-200 p-2.5 mb-3 flex items-center gap-2 flex-wrap">
+    <div class="relative flex-1 min-w-[200px]"><span class="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">🔍</span>
+      <input id="q" placeholder="ค้นหา ชื่อ / EN / ชื่อเล่น / รหัส / ตำแหน่ง…" class="w-full text-sm border border-slate-200 rounded-lg pl-9 pr-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-300" />
+    </div>
+    <select id="fdept" class="text-sm border border-slate-200 rounded-lg px-3 py-2 bg-white"></select>
+    <select id="fbranch" class="text-sm border border-slate-200 rounded-lg px-3 py-2 bg-white"></select>
+    <select id="freason" class="hidden text-sm border border-rose-200 text-rose-700 rounded-lg px-3 py-2 bg-white"></select>
+    <button id="toggleSalary" class="text-sm border rounded-lg px-3 py-2 font-medium whitespace-nowrap"></button>
+  </div>
+
+  <div class="bg-white rounded-xl border border-slate-200 overflow-x-auto scrollbox shadow-sm">
+    <table class="w-full text-xs border-collapse">
+      <thead class="text-left"><tr id="head"></tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+  </div>
+
+  <div class="text-center text-[11px] text-slate-400 mt-4">
+    พรีวิว Employee Database · <b>ข้อมูลตัวอย่าง (placeholder)</b> — กดที่แถวเพื่อแก้ไข · อายุงาน / Age / วันโปรเบชั่น คำนวณอัตโนมัติ <b>ตรงกับระบบโปรเบชั่น (Day 30/60/90, ครบ Day 119)</b>
+  </div>
+</div>
+
+<!-- edit / add modal -->
+<div id="modal" class="hidden fixed inset-0 bg-black/40 flex items-start justify-center p-4 overflow-y-auto z-50">
+  <div class="bg-white rounded-2xl shadow-xl w-full max-w-2xl mt-8">
+    <div class="flex items-center justify-between px-5 py-3 border-b border-slate-100">
+      <div id="mtitle" class="font-semibold text-slate-800">แก้ไขพนักงาน</div>
+      <button id="mclose" class="w-7 h-7 grid place-items-center rounded-full text-slate-400 hover:bg-slate-100">✕</button>
+    </div>
+    <div id="mbody" class="grid sm:grid-cols-2 gap-3 px-5 py-4"></div>
+    <div class="flex items-center justify-between gap-2 px-5 py-3 border-t border-slate-100 flex-wrap">
+      <div class="flex items-center gap-2">
+        <button id="mresign" class="text-xs text-rose-600 border border-rose-200 hover:bg-rose-50 px-3 py-1.5 rounded-lg font-medium">📤 ลาออก</button>
+        <button id="mdelete" class="text-xs text-slate-400 hover:text-rose-600 hover:bg-rose-50 px-3 py-1.5 rounded-lg">🗑 ลบ</button>
+      </div>
+      <div class="flex gap-2">
+        <button id="mcancel" class="text-sm px-3 py-1.5 text-slate-600">ยกเลิก</button>
+        <button id="msave" class="text-sm bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-1.5 rounded-lg">✓ บันทึก</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ===== example placeholder data (NOT real) ===== */
+var DATA = [
+  { dept:'Operations',              position:'Shop Manager',        empId:'680014',  branch:'Central Lardprao', nick:'(ตัวอย่าง)', name:'น.ส. ตัวอย่าง หนึ่ง', nameEn:'Ms. Example One',    join:'2025-01-10', birth:'1996-05-20', salary:'28000' },
+  { dept:'Supply Chain Management', position:'Stock Officer',        empId:'680084',  branch:'HQ (คลังสินค้า)',  nick:'(เดโม)',     name:'นาย เดโม สอง',        nameEn:'Mr. Demo Two',       join:'2025-06-04', birth:'1992-11-15', salary:'18000' },
+  { dept:'Human Resources',         position:'Recruitment Officer', empId:'100025',  branch:'Head Office',      nick:'(พรีวิว)',   name:'น.ส. พรีวิว สาม',      nameEn:'Ms. Preview Three',  join:'2024-08-04', birth:'2000-02-05', salary:'22000' },
+  { dept:'Marketing',               position:'Graphic Designer',    empId:'102013',  branch:'Head Office',      nick:'(ตัวอย่าง)', name:'นาย ตัวอย่าง สี่',     nameEn:'Mr. Sample Four',    join:'2025-11-05', birth:'1998-10-31', salary:'25000' },
+  { dept:'Operations',              position:'Sales-Part Time',     empId:'6901025', branch:'Siam Paragon',     nick:'(เดโม)',     name:'น.ส. เดโม ห้า',        nameEn:'Ms. Demo Five',      join:'2026-01-05', birth:'2003-12-12', salary:'12000' },
+];
+var RESIGN = [
+  { dept:'Operations',      position:'Sales-Part Time',           empId:'680091', branch:'Central Lardprao', nick:'(ตัวอย่าง)', name:'น.ส. ตัวอย่าง หก',  nameEn:'Ms. Example Six',   join:'2024-06-19', birth:'2002-08-14', salary:'12000', resign:'2025-09-15', reason:'ได้งานใหม่',        detail:'-' },
+  { dept:'Operations',      position:'Massage staff',             empId:'680602', branch:'Siam Discovery',   nick:'(เดโม)',     name:'นาย เดโม เจ็ด',     nameEn:'Mr. Demo Seven',    join:'2025-05-01', birth:'2000-02-07', salary:'15000', resign:'2026-02-01', reason:'ไม่ต่อสัญญาจ้าง',  detail:'-' },
+  { dept:'Human Resources', position:'HR Operations Officer',     empId:'100008', branch:'Head Office',      nick:'(พรีวิว)',   name:'น.ส. พรีวิว แปด',    nameEn:'Ms. Preview Eight', join:'2025-02-10', birth:'1995-06-09', salary:'20000', resign:'2025-08-08', reason:'ไม่ผ่านการทดลองงาน', detail:'-' },
+  { dept:'Marketing',       position:'Local Store Marketing Off.',empId:'102027', branch:'Head Office',      nick:'(ตัวอย่าง)', name:'นาย ตัวอย่าง เก้า', nameEn:'Mr. Sample Nine',   join:'2025-04-01', birth:'1993-02-25', salary:'24000', resign:'2025-12-01', reason:'กลับไปดูแลครอบครัว', detail:'คุณพ่อประสบอุบัติเหตุ' },
+];
+
+/* ===== probation milestones — MATCH the existing probation system ===== */
+var PROBATION_ROUNDS = [30, 60, 90];   // ประเมินรอบ Day 30/60/90 (ตรงกับระบบเดิม)
+var PROBATION_ELIGIBLE = 119;          // ครบทดลองงาน (PROBATION_ELIGIBLE = 119, total 120 วัน)
+
+var TODAY = new Date();
+var view = 'active';
+var editIdx = -1;
+var resignMode = false;
+var showSalary = false;   // เงินเดือนซ่อนไว้ก่อน · กดปุ่มเพื่อเปิด
+var modalEl = document.getElementById('modal');
+
+var DEPT_COLOR = {
+  'Operations':'bg-sky-100 text-sky-700','Supply Chain Management':'bg-amber-100 text-amber-700',
+  'Human Resources':'bg-violet-100 text-violet-700','Marketing':'bg-pink-100 text-pink-700',
+  'Business Development':'bg-emerald-100 text-emerald-700','Information Technology':'bg-indigo-100 text-indigo-700',
+  'Finance':'bg-teal-100 text-teal-700'
+};
+
+function pad(n){ return String(n).padStart(2,'0'); }
+function todayISO(){ var d=new Date(); return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate()); }
+function fmt(d){ if(!d) return '-'; var x=(d instanceof Date)?d:new Date(d); if(isNaN(x)) return '-'; return pad(x.getDate())+'/'+pad(x.getMonth()+1)+'/'+x.getFullYear(); }
+function addDays(iso,n){ var d=new Date(iso); if(isNaN(d))return null; d.setDate(d.getDate()+n); return d; }
+function diffYMD(fromIso, to){ var a=new Date(fromIso), b=to||new Date(); if(isNaN(a)||isNaN(b)) return null;
+  var y=b.getFullYear()-a.getFullYear(), m=b.getMonth()-a.getMonth(), d=b.getDate()-a.getDate();
+  if(d<0){ m--; d+=new Date(b.getFullYear(), b.getMonth(), 0).getDate(); }
+  if(m<0){ y--; m+=12; } return {y:y,m:m,d:d};
+}
+function ymd(diff){ return diff ? (diff.y+' ปี '+diff.m+' ด. '+diff.d+' ว.') : '-'; }
+function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;'); }
+function deptBadge(d){ var c=DEPT_COLOR[d]||'bg-slate-100 text-slate-600'; return '<span class="px-2 py-0.5 rounded-full '+c+'">'+esc(d)+'</span>'; }
+function branchBadge(b){ return '<span class="px-2 py-0.5 rounded-md bg-slate-100 text-slate-600">'+esc(b)+'</span>'; }
+function fmtMoney(s){ if(s==null||s==='') return '-'; var n=Number(String(s).replace(/[, ]/g,'')); if(isNaN(n)) return esc(s); return n.toLocaleString('en-US')+' ฿'; }
+function salaryCell(r){ return showSalary
+  ? '<span class="font-semibold text-emerald-700">'+fmtMoney(r.salary)+'</span>'
+  : '<span class="text-slate-300 tracking-widest select-none">••••••</span>'; }
+
+var ACTIVE_COLS = [
+  {h:'No.',            f:function(r,i){return i+1;},                 cls:'text-slate-400'},
+  {h:'Department',     f:function(r){return deptBadge(r.dept);},     raw:true},
+  {h:'Position',       f:function(r){return r.position;},            cls:'text-slate-700'},
+  {h:'Employee ID',    f:function(r){return r.empId;},               cls:'text-slate-500 font-mono'},
+  {h:'Branch',         f:function(r){return branchBadge(r.branch);}, raw:true},
+  {h:'ชื่อเล่น',        f:function(r){return r.nick;},                cls:'text-slate-500'},
+  {h:'ชื่อ-สกุล (TH)',  f:function(r){return r.name;},                cls:'font-semibold text-slate-800'},
+  {h:'Name (EN)',      f:function(r){return r.nameEn;},              cls:'text-slate-500 italic'},
+  {h:'Join Date',      f:function(r){return fmt(r.join);},           cls:'text-slate-600'},
+  {h:'รอบ 1 (D30)',    f:function(r){return fmt(addDays(r.join,30));}, tint:true},
+  {h:'รอบ 2 (D60)',    f:function(r){return fmt(addDays(r.join,60));}, tint:true},
+  {h:'รอบ 3 (D90)',    f:function(r){return fmt(addDays(r.join,90));}, tint:true},
+  {h:'ครบโปร (D119)',  f:function(r){return fmt(addDays(r.join,PROBATION_ELIGIBLE));}, tint:true, cls:'font-semibold text-amber-700'},
+  {h:'อายุงาน',         f:function(r){return '<span class="px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 font-medium">'+ymd(diffYMD(r.join,TODAY))+'</span>';}, raw:true},
+  {h:'Birth Date',     f:function(r){return fmt(r.birth);},          cls:'text-slate-600'},
+  {h:'Age',            f:function(r){return ymd(diffYMD(r.birth,TODAY));}, cls:'text-slate-600'},
+  {h:'เงินเดือน',       f:salaryCell, raw:true, money:true, cls:'text-right'}
+];
+var RESIGN_COLS = [
+  {h:'No.',            f:function(r,i){return i+1;},                 cls:'text-slate-400'},
+  {h:'Department',     f:function(r){return deptBadge(r.dept);},     raw:true},
+  {h:'Position',       f:function(r){return r.position;},            cls:'text-slate-700'},
+  {h:'Employee ID',    f:function(r){return r.empId;},               cls:'text-slate-500 font-mono'},
+  {h:'Branch',         f:function(r){return branchBadge(r.branch);}, raw:true},
+  {h:'ชื่อเล่น',        f:function(r){return r.nick;},                cls:'text-slate-500'},
+  {h:'ชื่อ-สกุล (TH)',  f:function(r){return r.name;},                cls:'font-semibold text-slate-800'},
+  {h:'Name (EN)',      f:function(r){return r.nameEn;},              cls:'text-slate-500 italic'},
+  {h:'Join Date',      f:function(r){return fmt(r.join);},           cls:'text-slate-600'},
+  {h:'Effective Date',    f:function(r){return fmt(r.resign);},         cls:'font-semibold text-rose-600'},
+  {h:'อายุงานรวม',      f:function(r){return ymd(diffYMD(r.join,new Date(r.resign)));}, cls:'text-slate-600'},
+  {h:'เหตุผลลาออก',     f:function(r){return '<span class="px-2 py-0.5 rounded-full bg-rose-100 text-rose-700">'+esc(r.reason)+'</span>';}, raw:true},
+  {h:'รายละเอียด',      f:function(r){return r.detail||'-';},          cls:'text-slate-500'},
+  {h:'เงินเดือน',       f:salaryCell, raw:true, money:true, cls:'text-right'}
+];
+
+/* ===== preset options (เลือกได้ + กดเพิ่มเอง) ===== */
+var DEPT_OPTIONS = ['Operations','Human Resources','Supply Chain Management','Marketing','Business Development','Information Technology','Finance','Learning & Development','Project Management','Legal','Inspector','Research & Development'];
+var REASON_OPTIONS = [
+  'รายได้รวมไม่เพียงพอ',
+  'สวัสดิการไม่ตอบโจทย์ (ค่าอาหาร/เดินทาง)',
+  'โครงสร้างการปรับขึ้นเงินเดือนไม่จูงใจ',
+  'ความเหนื่อยล้าสะสม (Burnout) จากปริมาณงาน',
+  'ชั่วโมงทำงานหรือการเข้ากะไม่ยืดหยุ่น',
+  'ลักษณะงานจริงไม่ตรงตามที่ตกลงไว้',
+  'ปัญหาความขัดแย้งกับเพื่อนร่วมงาน',
+  'สไตล์การบริหารของหัวหน้างาน/SM,AM',
+  'การสื่อสารหรือนโยบายจากส่วนกลางเปลี่ยนบ่อย',
+  'ได้งานใหม่',
+  'กลับไปดูแลครอบครัว',
+  'รักษาสุขภาพ',
+  'ไม่ผ่านการทดลองงาน',
+  'ไม่ต่อสัญญาจ้าง',
+  'ทำธุรกิจส่วนตัว',
+  'ติดต่อไม่ได้ เกิน 3 วัน',
+  'เลิกจ้าง'
+];
+
+var FIELDS_ACTIVE = [
+  {k:'dept',label:'Department',type:'select',options:DEPT_OPTIONS},{k:'position',label:'Position'},{k:'empId',label:'Employee ID'},
+  {k:'branch',label:'Branch'},{k:'nick',label:'ชื่อเล่น'},{k:'name',label:'ชื่อ-สกุล (TH)'},
+  {k:'nameEn',label:'Name (EN)'},{k:'join',label:'Join Date',type:'date'},{k:'birth',label:'Birth Date',type:'date'},
+  {k:'salary',label:'เงินเดือน (บาท)'}
+];
+var FIELDS_RESIGN = FIELDS_ACTIVE.concat([
+  {k:'resign',label:'Effective Date',type:'date'},{k:'reason',label:'เหตุผลลาออก',type:'select',options:REASON_OPTIONS},{k:'detail',label:'รายละเอียด'}
+]);
+
+function curCols(){ return view==='active'?ACTIVE_COLS:RESIGN_COLS; }
+function curData(){ return view==='active'?DATA:RESIGN; }
+function curFields(){ return view==='active'?FIELDS_ACTIVE:FIELDS_RESIGN; }
+function uniq(data,key){ var s=[]; data.forEach(function(r){ if(r[key] && s.indexOf(r[key])<0) s.push(r[key]); }); return s.sort(); }
+
+function fillSelect(id, label, key){
+  var el=document.getElementById(id), prev=el.value;
+  el.innerHTML = '<option value="">'+label+'</option>' + uniq(curData(),key).map(function(v){ return '<option>'+esc(v)+'</option>'; }).join('');
+  if([].slice.call(el.options).some(function(o){return o.value===prev;})) el.value=prev;
+}
+
+function setTabStyles(){
+  var a=document.getElementById('tab-active'), r=document.getElementById('tab-resign');
+  var off='bg-white text-slate-600 border-slate-200 hover:border-slate-300', base='text-sm px-4 py-2 rounded-xl border font-medium transition ';
+  a.className=base+(view==='active'?'bg-indigo-600 text-white border-indigo-600 shadow-sm':off);
+  r.className=base+(view==='resign'?'bg-rose-600 text-white border-rose-600 shadow-sm':off);
+}
+
+function render(){
+  var cols=curCols(), data=curData();
+  document.getElementById('head').innerHTML = cols.map(function(c){
+    var bg = c.money ? 'bg-emerald-700' : (c.tint ? 'bg-amber-500' : (view==='active'?'bg-indigo-600':'bg-rose-500'));
+    var icon = c.money ? (showSalary?'👁 ':'🔒 ') : '';
+    return '<th class="px-3 py-2.5 font-semibold text-white '+bg+'">'+icon+esc(c.h)+'</th>';
+  }).join('');
+  var q=(document.getElementById('q').value||'').trim().toLowerCase();
+  var fd=document.getElementById('fdept').value, fb=document.getElementById('fbranch').value, frv=document.getElementById('freason').value;
+  var rows = data.map(function(r,i){return {r:r,i:i};}).filter(function(o){
+    var r=o.r;
+    if(fd && r.dept!==fd) return false;
+    if(fb && r.branch!==fb) return false;
+    if(view==='resign' && frv && r.reason!==frv) return false;
+    if(q && ![r.name,r.nameEn,r.nick,r.empId,r.position].some(function(v){ return String(v).toLowerCase().includes(q); })) return false;
+    return true;
+  });
+  document.getElementById('rows').innerHTML = rows.length ? rows.map(function(o,ri){
+    var r=o.r, zebra = ri%2 ? 'bg-slate-50' : 'bg-white';
+    return '<tr data-idx="'+o.i+'" class="emp-row cursor-pointer '+zebra+' hover:bg-indigo-50 transition-colors border-b border-slate-100">'+ cols.map(function(c){
+      var v=c.f(r,ri); var inner=c.raw?v:esc(v);
+      return '<td class="px-3 py-2 '+(c.cls||'text-slate-600')+' '+(c.tint?'bg-amber-50':'')+'">'+inner+'</td>';
+    }).join('') +'</tr>';
+  }).join('') : '<tr><td colspan="'+cols.length+'" class="text-center text-slate-400 py-10">ไม่พบข้อมูลตามตัวกรอง</td></tr>';
+  [].slice.call(document.querySelectorAll('.emp-row')).forEach(function(tr){ tr.onclick=function(){ openEdit(+tr.getAttribute('data-idx')); }; });
+  document.getElementById('sub').textContent = (view==='active'?'พนักงานปัจจุบัน':'ลาออก')+' · รวม '+rows.length+' คน (ตัวอย่าง) · กดที่แถวเพื่อแก้ไข · เลื่อนแนวนอนเพื่อดูทุกคอลัมน์ →';
+}
+
+function setSalaryBtn(){
+  var b=document.getElementById('toggleSalary');
+  b.textContent = showSalary ? '🙈 ซ่อนเงินเดือน' : '👁 ดูเงินเดือน';
+  b.className = 'text-sm border rounded-lg px-3 py-2 font-medium whitespace-nowrap ' + (showSalary ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300');
+}
+function switchView(v){
+  view=v; setTabStyles();
+  fillSelect('fdept','ทุกแผนก','dept'); fillSelect('fbranch','ทุกสาขา/สถานที่','branch');
+  var fr=document.getElementById('freason');
+  if(view==='resign'){ fr.classList.remove('hidden'); fillSelect('freason','ทุกเหตุผลลาออก','reason'); }
+  else { fr.classList.add('hidden'); fr.value=''; }
+  render();
+}
+
+/* ---- edit / add modal ---- */
+function renderModalBody(fields, rec){
+  document.getElementById('mbody').innerHTML = fields.map(function(f){
+    var hi = (f.k==='reason'||f.k==='resign') ? ' bg-rose-50/40 rounded-lg p-1' : '';
+    var label = '<label class="text-[11px] '+(f.k==='reason'?'text-rose-600 font-medium':'text-slate-500')+'">'+f.label+(f.k==='reason'?' *':'')+'</label>';
+    var ctrl;
+    if(f.type==='select'){
+      var val = rec[f.k]||'';
+      var opts = f.options.slice();
+      if(val && opts.indexOf(val)<0) opts.unshift(val);   // เก็บค่าเดิมที่เคยพิมพ์เองไว้
+      ctrl = '<select data-k="'+f.k+'" data-label="'+esc(f.label)+'" class="emp-select w-full text-sm border border-slate-200 rounded-lg px-2 py-1.5 mt-0.5 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-300">'
+        + '<option value="">— เลือก —</option>'
+        + opts.map(function(o){ return '<option'+(o===val?' selected':'')+'>'+esc(o)+'</option>'; }).join('')
+        + '<option value="__custom__">＋ อื่นๆ (พิมพ์เอง)</option></select>';
+    } else {
+      ctrl = '<input data-k="'+f.k+'" type="'+(f.type||'text')+'" value="'+esc(rec[f.k]||'')+'" class="w-full text-sm border border-slate-200 rounded-lg px-2 py-1.5 mt-0.5 focus:outline-none focus:ring-2 focus:ring-indigo-300">';
+    }
+    return '<div class="'+hi+'">'+label+ctrl+'</div>';
+  }).join('') + '<div id="calc" class="sm:col-span-2 bg-slate-50 border border-slate-200 rounded-lg p-3 text-xs text-slate-600"></div>';
+  ['join','birth','resign'].forEach(function(k){ var e=document.querySelector('#mbody input[data-k="'+k+'"]'); if(e) e.oninput=updateCalc; });
+  [].slice.call(document.querySelectorAll('#mbody select.emp-select')).forEach(function(sel){
+    sel.setAttribute('data-prev', sel.value);
+    sel.onchange=function(){
+      if(sel.value==='__custom__'){
+        var v=prompt('พิมพ์'+sel.getAttribute('data-label')+'ใหม่');
+        if(v && v.trim()){
+          v=v.trim();
+          if(![].slice.call(sel.options).some(function(o){ return o.value===v; })){
+            var opt=document.createElement('option'); opt.textContent=v; opt.value=v;
+            sel.insertBefore(opt, sel.querySelector('option[value="__custom__"]'));
+          }
+          sel.value=v;
+        } else { sel.value=sel.getAttribute('data-prev')||''; }
+      }
+      sel.setAttribute('data-prev', sel.value);
+    };
+  });
+  updateCalc();
+}
+function openEdit(idx){
+  editIdx=idx; resignMode=false;
+  var rec = idx>=0 ? curData()[idx] : {};
+  document.getElementById('mtitle').textContent = (idx>=0?'แก้ไข':'เพิ่ม')+'พนักงาน'+(view==='resign'?' (ลาออก)':'');
+  document.getElementById('mdelete').style.display = idx>=0 ? '' : 'none';
+  document.getElementById('mresign').style.display = (idx>=0 && view==='active') ? '' : 'none';
+  var sv=document.getElementById('msave'); sv.textContent='✓ บันทึก'; sv.className='text-sm bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-1.5 rounded-lg';
+  renderModalBody(curFields(), rec);
+  modalEl.classList.remove('hidden');
+}
+function startResign(){
+  // keep any edits the user already made to the active fields
+  var merged = Object.assign({}, DATA[editIdx]);
+  FIELDS_ACTIVE.forEach(function(f){ merged[f.k]=getF(f.k); });
+  if(!merged.resign) merged.resign = todayISO();
+  resignMode=true;
+  document.getElementById('mtitle').textContent = '📤 บันทึกการลาออก → ย้ายไป Resign';
+  document.getElementById('mresign').style.display='none';
+  document.getElementById('mdelete').style.display='none';
+  var sv=document.getElementById('msave'); sv.textContent='✓ ยืนยันลาออก'; sv.className='text-sm bg-rose-600 hover:bg-rose-700 text-white px-4 py-1.5 rounded-lg';
+  renderModalBody(FIELDS_RESIGN, merged);
+  var rs=document.querySelector('#mbody input[data-k="reason"]'); if(rs) rs.focus();
+}
+function getF(k){ var e=document.querySelector('#mbody [data-k="'+k+'"]'); return e?e.value:''; }
+function updateCalc(){
+  var join=getF('join'), birth=getF('birth'), resign=getF('resign');
+  var html='<div class="text-[11px] font-medium text-slate-500 mb-1.5">📐 คำนวณอัตโนมัติ · ตรงกับระบบโปรเบชั่น (Day 30/60/90 · ครบ Day 119)</div>';
+  if(join){
+    html += '<div class="grid grid-cols-2 sm:grid-cols-3 gap-1.5">'
+      +'<div>รอบ 1 (D30): <b class="text-slate-800">'+fmt(addDays(join,30))+'</b></div>'
+      +'<div>รอบ 2 (D60): <b class="text-slate-800">'+fmt(addDays(join,60))+'</b></div>'
+      +'<div>รอบ 3 (D90): <b class="text-slate-800">'+fmt(addDays(join,90))+'</b></div>'
+      +'<div>ครบโปร (D119): <b class="text-amber-700">'+fmt(addDays(join,PROBATION_ELIGIBLE))+'</b></div>'
+      +'<div>อายุงาน: <b class="text-emerald-700">'+ymd(diffYMD(join, resign?new Date(resign):TODAY))+'</b></div>'
+      + (birth?'<div>อายุ: <b class="text-slate-800">'+ymd(diffYMD(birth,TODAY))+'</b></div>':'')
+      +'</div>';
+  } else { html += '<div class="text-slate-400">กรอก Join Date เพื่อคำนวณวันโปรเบชั่น/อายุงาน</div>'; }
+  document.getElementById('calc').innerHTML = html;
+}
+function saveEdit(){
+  if(resignMode){ confirmResign(); return; }
+  var rec = editIdx>=0 ? curData()[editIdx] : {};
+  curFields().forEach(function(f){ rec[f.k]=getF(f.k).trim(); });
+  if(editIdx<0) curData().push(rec);
+  closeModal();
+  switchView(view);  // refresh filters (real data) + re-render
+}
+function confirmResign(){
+  if(!getF('reason').trim()){ alert('กรุณากรอกเหตุผลการลาออก'); var rs=document.querySelector('#mbody input[data-k="reason"]'); if(rs) rs.focus(); return; }
+  var rec = Object.assign({}, DATA[editIdx]);
+  FIELDS_RESIGN.forEach(function(f){ rec[f.k]=getF(f.k).trim(); });
+  if(!rec.resign) rec.resign = todayISO();
+  DATA.splice(editIdx,1);   // ออกจากพนักงานปัจจุบัน
+  RESIGN.push(rec);         // ดึงข้อมูลไปที่ Resign
+  closeModal();
+  switchView('resign');     // เด้งไปดูที่ชีต Resign ให้เห็นว่าย้ายมาแล้ว
+}
+function deleteEmp(){ if(editIdx>=0 && confirm('ลบพนักงานนี้?')){ curData().splice(editIdx,1); closeModal(); switchView(view); } }
+function closeModal(){ modalEl.classList.add('hidden'); editIdx=-1; resignMode=false; }
+
+document.getElementById('addBtn').onclick=function(){ openEdit(-1); };
+document.getElementById('mclose').onclick=closeModal;
+document.getElementById('mcancel').onclick=closeModal;
+document.getElementById('msave').onclick=saveEdit;
+document.getElementById('mresign').onclick=startResign;
+document.getElementById('mdelete').onclick=deleteEmp;
+modalEl.onclick=function(e){ if(e.target===modalEl) closeModal(); };
+document.getElementById('tab-active').onclick=function(){ switchView('active'); };
+document.getElementById('tab-resign').onclick=function(){ switchView('resign'); };
+document.getElementById('q').oninput=render;
+document.getElementById('fdept').onchange=render;
+document.getElementById('fbranch').onchange=render;
+document.getElementById('freason').onchange=render;
+document.getElementById('toggleSalary').onclick=function(){ showSalary=!showSalary; setSalaryBtn(); render(); };
+setSalaryBtn();
+switchView('active');
+</script>
+</body>
+</html>

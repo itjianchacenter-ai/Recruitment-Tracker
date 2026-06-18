@@ -36,6 +36,13 @@ export function roleFromSession(session) {
   const r = u?.app_metadata?.role || u?.user_metadata?.role;
   return r === 'user' ? 'user' : 'admin';
 }
+// Admin permission tier: 2 = full (แก้ไขได้ทุกอย่าง) · 1 = read-only (เข้าดูได้ แก้ไขไม่ได้)
+// อ่านจาก user metadata · default 2 = fail-safe (ไม่ล็อก admin เดิม เช่น hr01)
+export function levelFromSession(session) {
+  const u = session?.user;
+  const lv = u?.app_metadata?.level ?? u?.user_metadata?.level;
+  return Number(lv) === 1 ? 1 : 2;
+}
 
 // actor used for audit / created_by / updated_by — derived from logged-in user
 let _actor = 'HR';
@@ -128,6 +135,101 @@ export async function deleteBranch(id) {
   if (error) throw error;
 }
 
+// ---------- ATS · Candidate Database ---------------------------------------
+// Applicants per job position. Resume parsing (name/phone/email) is done in
+// the browser (regex); only the chosen fields + the resume file are stored.
+export async function listAtsPositions() {
+  const { data, error } = await supabase
+    .from('ats_positions').select('*')
+    .order('sort_order', { ascending: true }).order('name', { ascending: true });
+  if (error) throw error;
+  return data ?? [];
+}
+export async function createAtsPosition(payload) {
+  const { data, error } = await supabase.from('ats_positions').insert(payload).select().single();
+  if (error) throw error;
+  return data;
+}
+export async function deleteAtsPosition(id) {
+  const { error } = await supabase.from('ats_positions').delete().eq('id', id);
+  if (error) throw error;
+}
+export async function listAtsSources() {
+  const { data, error } = await supabase
+    .from('ats_sources').select('*')
+    .order('sort_order', { ascending: true }).order('name', { ascending: true });
+  if (error) throw error;
+  return data ?? [];
+}
+export async function createAtsSource(payload) {
+  const { data, error } = await supabase.from('ats_sources').insert(payload).select().single();
+  if (error) throw error;
+  return data;
+}
+export async function listAtsCandidates() {
+  const { data, error } = await supabase
+    .from('ats_candidates').select('*').order('created_at', { ascending: false });
+  if (error) throw error;
+  return data ?? [];
+}
+export async function createAtsCandidate(payload) {
+  const actor = getActor();
+  const { data, error } = await supabase
+    .from('ats_candidates').insert({ ...payload, created_by: actor, updated_by: actor })
+    .select().single();
+  if (error) throw error;
+  return data;
+}
+export async function updateAtsCandidate(id, patch) {
+  const { data, error } = await supabase
+    .from('ats_candidates')
+    .update({ ...patch, updated_by: getActor(), updated_at: new Date().toISOString() })
+    .eq('id', id).select().single();
+  if (error) throw error;
+  return data;
+}
+export async function deleteAtsCandidate(id) {
+  const { error } = await supabase.from('ats_candidates').delete().eq('id', id);
+  if (error) throw error;
+}
+// Resume upload -> private "recruitment" bucket, path ats/{ts}_{name}
+export async function uploadResume(file) {
+  const safeName = file.name.replace(/[^\w.\-]+/g, '_');
+  const path = `ats/${Date.now()}_${safeName}`;
+  const { error } = await supabase.storage.from(BUCKET).upload(path, file, { upsert: false });
+  if (error) throw error;
+  return { path, name: file.name, size: file.size, uploadedAt: new Date().toISOString(), uploadedBy: getActor() };
+}
+
+// ---------- Employee Database (ทะเบียนพนักงาน · active/resign) -------------
+export async function listEmployees() {
+  const { data, error } = await supabase
+    .from('emp_employees').select('*')
+    .order('created_at', { ascending: true });
+  if (error) throw error;
+  return data ?? [];
+}
+export async function createEmployee(payload) {
+  const actor = getActor();
+  const { data, error } = await supabase
+    .from('emp_employees').insert({ ...payload, created_by: actor, updated_by: actor })
+    .select().single();
+  if (error) throw error;
+  return data;
+}
+export async function updateEmployee(id, patch) {
+  const { data, error } = await supabase
+    .from('emp_employees')
+    .update({ ...patch, updated_by: getActor(), updated_at: new Date().toISOString() })
+    .eq('id', id).select().single();
+  if (error) throw error;
+  return data;
+}
+export async function deleteEmployee(id) {
+  const { error } = await supabase.from('emp_employees').delete().eq('id', id);
+  if (error) throw error;
+}
+
 // ---------- Storage (resume / signed docs / pre-boarding uploads) ----------
 // Bucket "recruitment" (private). Path convention: {candidateId}/step{n}/{filename}
 
@@ -189,8 +291,8 @@ export async function adminListUsers() {
   const data = await invokeAdminUsers('list');
   return data?.users ?? [];
 }
-export async function adminCreateUser({ email, password, name, dept, role }) {
-  return invokeAdminUsers('create', { email, password, name, dept, role });
+export async function adminCreateUser({ email, password, name, dept, role, level }) {
+  return invokeAdminUsers('create', { email, password, name, dept, role, level });
 }
 export async function adminResetPassword({ id, email, password }) {
   return invokeAdminUsers('reset-password', { id, email, password });

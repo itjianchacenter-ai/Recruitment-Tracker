@@ -19,33 +19,38 @@ const { useState, useEffect, useMemo, useRef, useCallback } = React;
 /* ===================== MOCK BACKEND (standalone demo · no Supabase) ===================== */
 let _seq = 2000;
 const _nowIso = () => new Date().toISOString();
-let _session = { user: { email: 'hr01@demo.local', app_metadata: { role: 'admin' }, user_metadata: { name: 'HR Demo' } } };
+let _session = { user: { email: 'hr01@demo.local', app_metadata: { role: 'admin', level: 2 }, user_metadata: { name: 'HR Demo' } } };
 let _authCb = null;
 const _users = [
-  { id:'u1', email:'hr01@demo.local',     name:'HR Demo (admin)',     role:'admin', dept:'HR',         hasPassword:true },
-  { id:'u2', email:'somying@demo.local',  name:'คุณสมหญิง รักงาน',     role:'user',  dept:'Finance',    hasPassword:true },
-  { id:'u3', email:'wittaya@demo.local',  name:'คุณวิทยา รักดี',       role:'user',  dept:'Operations', hasPassword:true },
+  { id:'u1', email:'hr01@demo.local',     name:'HR01 (Admin L2)',      role:'admin', level:2, dept:'HR',         hasPassword:true },
+  { id:'u4', email:'hr02@demo.local',     name:'HR02 (Admin L2)',      role:'admin', level:2, dept:'HR',         hasPassword:true },
+  { id:'u5', email:'view01@demo.local',   name:'Viewer01 (Admin L1)',  role:'admin', level:1, dept:'HR',         hasPassword:true },
+  { id:'u6', email:'view02@demo.local',   name:'Viewer02 (Admin L1)',  role:'admin', level:1, dept:'Operations', hasPassword:true },
+  { id:'u2', email:'somying@demo.local',  name:'คุณสมหญิง รักงาน',     role:'user',  level:2, dept:'Finance',    hasPassword:true },
+  { id:'u3', email:'wittaya@demo.local',  name:'คุณวิทยา รักดี',       role:'user',  level:2, dept:'Operations', hasPassword:true },
 ];
 const _rows = [
   { id:'c1', name:null, position:'Content Creator Officer', department:'Marketing', type:'new_headcount', process_start_date:'2026-05-20', current_step:3, status:'active', steps:[], documents:[], probation:{}, shortlist:[], generated_docs:{}, approval_workflows:{}, distributions:{}, files:[], notes:null, created_by:'HR Demo' },
   { id:'c2', name:'สมชาย ใจดี', position:'Barista', department:'Operations', type:'new_headcount', process_start_date:'2026-02-01', current_step:6, status:'active', steps:[], documents:[], probation:{ startDate:'2026-02-01', evals:{} }, shortlist:[], generated_docs:{}, approval_workflows:{}, distributions:{}, files:[], notes:null, created_by:'HR Demo' },
   { id:'c3', name:'อารยา ตั้งใจ', position:'Cashier', department:'Operations', type:'replacement', process_start_date:'2026-01-10', current_step:6, status:'active', steps:[], documents:[], probation:{ startDate:'2026-01-10', direct:true, evals:{} }, shortlist:[], generated_docs:{}, approval_workflows:{}, distributions:{}, files:[], notes:'เพิ่มเข้าตรง (เดโม้)', created_by:'HR Demo' },
+  { id:'c4', name:'ปวีณา รอเริ่ม', position:'Store Manager', department:'Operations', type:'new_headcount', process_start_date:'2026-05-25', current_step:5, status:'active', steps:[], documents:[], probation:{ startDate:'2026-06-25' }, shortlist:[], generated_docs:{}, approval_workflows:{}, distributions:{}, files:[], notes:null, created_by:'HR Demo' },
 ];
 async function listCandidates(){ return _rows.map(r => JSON.parse(JSON.stringify(r))); }
 async function createCandidate(row){ const r = { id:'c'+(++_seq), ...row }; _rows.unshift(r); return JSON.parse(JSON.stringify(r)); }
 async function updateCandidate(id, patch){ const i=_rows.findIndex(r=>r.id===id); if(i>=0){ _rows[i] = { ..._rows[i], ...patch, id }; } return _rows[i]; }
 async function deleteCandidate(id){ const i=_rows.findIndex(r=>r.id===id); if(i>=0) _rows.splice(i,1); }
 function subscribeCandidates(_cb){ return () => {}; }
-async function signIn(u){ _session = { user:{ email:(String(u).includes('@')?String(u):String(u)+'@demo.local').toLowerCase(), app_metadata:{ role:'admin' }, user_metadata:{ name:String(u) } } }; if(_authCb) _authCb(_session); return _session; }
+async function signIn(u){ const lv = /view|^l1|readonly/i.test(String(u)) ? 1 : 2; _session = { user:{ email:(String(u).includes('@')?String(u):String(u)+'@demo.local').toLowerCase(), app_metadata:{ role:'admin', level:lv }, user_metadata:{ name:String(u) } } }; if(_authCb) _authCb(_session); return _session; }
 async function signOut(){ _session = null; if(_authCb) _authCb(null); }
 async function getSession(){ return _session; }
 function onAuthChange(cb){ _authCb = cb; return () => { _authCb = null; }; }
 function actorFromSession(s){ const e=s&&s.user&&s.user.email||''; return e? e.split('@')[0].toUpperCase():'HR'; }
 function roleFromSession(s){ const u=s&&s.user; const r=u&&(u.app_metadata&&u.app_metadata.role||u.user_metadata&&u.user_metadata.role); return r==='user'?'user':'admin'; }
+function levelFromSession(s){ const u=s&&s.user; const lv=u&&(u.app_metadata&&u.app_metadata.level!=null?u.app_metadata.level:(u.user_metadata&&u.user_metadata.level)); return Number(lv)===1?1:2; }
 function usernameToEmail(u){ const s=String(u||'').trim(); return s.includes('@')?s.toLowerCase():s.toLowerCase()+'@demo.local'; }
 function getActor(){ return actorFromSession(_session); }
 async function adminListUsers(){ return _users.map(u=>({ ...u })); }
-async function adminCreateUser(p){ const u={ id:'u'+(++_seq), email:p.email, name:p.name, dept:p.dept, role:p.role||'user', hasPassword:true }; _users.push(u); return u; }
+async function adminCreateUser(p){ const u={ id:'u'+(++_seq), email:p.email, name:p.name, dept:p.dept, role:p.role||'user', level:p.level||2, hasPassword:true }; _users.push(u); return u; }
 async function adminResetPassword(){ return { ok:true }; }
 async function adminDeleteUser(p){ const i=_users.findIndex(u=>u.email===p.email); if(i>=0) _users.splice(i,1); return { ok:true }; }
 async function findUnregisteredEmails(){ return []; }
@@ -59,7 +64,7 @@ const _branches = [
     staff:[{name:'Min Zaw Khaing',nick:'ลุย',status:'filled'},{name:'ชญาภา จันทะขาตร',nick:'ครีม',status:'filled'},{name:'Kai Intrabusorn',nick:'ไก่',status:'filled'},{status:'hold'},{status:'hold'},{status:'hold'},{status:'hold'}] } },
   { id:'b2', brand:'POLLY', name:'Central World 7Fl.', target_pax:9, sort_order:2, manning:{
     sm:[{name:'อุมาพร ลีดา',nick:'เขม',status:'filled'}], asm:[],
-    staff:[{name:'MON TIN LAY',nick:'น้อ',status:'filled'},{name:'SANDAR LWIN',nick:'แสง',status:'filled'},{name:'เจนจิรา ฮันจันทา',nick:'เจน',status:'filled'},{status:'vacant'},{status:'hold'},{status:'hold'}] } },
+    staff:[{name:'MON TIN LAY',nick:'น้อ',status:'filled'},{name:'SANDAR LWIN',nick:'แสง',status:'filled'},{name:'เจนจิรา ฮันจันทา',nick:'เจน',status:'filled'},{status:'vacant'},{status:'vacant'},{status:'vacant'}] } },
   { id:'b3', brand:'JAI CHAN', name:'Dragon Town', target_pax:13, sort_order:3, manning:{
     sm:[{status:'hold'}],
     asm:[{name:'Naing Tun Oo',nick:'อเล็กซ์',status:'filled',badge:'รักษาการ'},{name:'นภสร พึ่งช่วย',nick:'กุหลาย',status:'filled',badge:'รักษาการ'}],
@@ -75,6 +80,62 @@ async function listBranches(kind){ return JSON.parse(JSON.stringify(_branches.fi
 async function createBranch(p){ const b={ id:'b'+(++_seq), created_at:_nowIso(), updated_at:_nowIso(), ...p }; _branches.push(b); return JSON.parse(JSON.stringify(b)); }
 async function updateBranch(id, patch){ const i=_branches.findIndex(b=>b.id===id); if(i>=0) _branches[i]={ ..._branches[i], ...patch, id }; return _branches[i]; }
 async function deleteBranch(id){ const i=_branches.findIndex(b=>b.id===id); if(i>=0) _branches.splice(i,1); }
+
+/* ----- ATS · Candidate Database (mock) ----- */
+const _atsPositions = [ { id:'p1', name:'Barista', sort_order:1 }, { id:'p2', name:'Store Manager', sort_order:2 }, { id:'p3', name:'Marketing Officer', sort_order:3 } ];
+const _atsSources = ['Job Thai','Jobs DB','Job Fin Fin','Job BKK','Facebook','LinkedIn','Head-hunting','Refer'].map((n,i)=>({ id:'s'+(i+1), name:n, sort_order:i+1 }));
+const _atsCandidates = [
+  { id:'ac1', position:'Barista', name:'ณิชา พริ้มเพรา', phone:'081-222-3344', email:'nicha.p@gmail.com', source:'Jobs DB', stage:'Onsite Interview', expected_salary:'15000', reason:null, applied_date:'2026-06-10', resume:null, created_at:'2026-06-10T00:00:00Z' },
+  { id:'ac2', position:'Store Manager', name:'วีรชัย ตั้งมั่น', phone:'086-555-7788', email:'weerachai.t@gmail.com', source:'Refer', stage:'Offered', expected_salary:'38000', reason:null, applied_date:'2026-06-15', resume:null, created_at:'2026-06-15T00:00:00Z' },
+];
+async function listAtsPositions(){ return _atsPositions.map(p=>({ ...p })); }
+async function createAtsPosition(p){ const r={ id:'p'+(++_seq), ...p }; _atsPositions.push(r); return { ...r }; }
+async function deleteAtsPosition(id){ const i=_atsPositions.findIndex(p=>p.id===id); if(i>=0) _atsPositions.splice(i,1); }
+async function listAtsSources(){ return _atsSources.map(s=>({ ...s })); }
+async function createAtsSource(p){ const r={ id:'s'+(++_seq), ...p }; _atsSources.push(r); return { ...r }; }
+async function listAtsCandidates(){ return _atsCandidates.map(c=>JSON.parse(JSON.stringify(c))); }
+async function createAtsCandidate(p){ const r={ id:'ac'+(++_seq), created_at:_nowIso(), ...p }; _atsCandidates.unshift(r); return JSON.parse(JSON.stringify(r)); }
+async function updateAtsCandidate(id, patch){ const i=_atsCandidates.findIndex(c=>c.id===id); if(i>=0) _atsCandidates[i]={ ..._atsCandidates[i], ...patch, id }; return _atsCandidates[i]; }
+async function deleteAtsCandidate(id){ const i=_atsCandidates.findIndex(c=>c.id===id); if(i>=0) _atsCandidates.splice(i,1); }
+async function uploadResume(file){ return { path:'ats/demo_'+(file&&file.name||'resume.pdf'), name:file&&file.name||'resume.pdf', size:file&&file.size||10000, uploadedAt:_nowIso(), uploadedBy:getActor() }; }
+
+/* ----- Employee Database (mock) ----- */
+const _emps = [
+  { id:'e1', status:'active', dept:'Operations',              position:'Shop Manager',        work_status:'Full time', emp_id:'680014',  branch:'Central Lardprao', nick:'(ตัวอย่าง)', name:'น.ส. ตัวอย่าง หนึ่ง', name_en:'Ms. Example One',   join_date:'2025-01-10', birth_date:'1996-05-20', salary:'28000', created_at:'2025-01-10T00:00:00Z' },
+  { id:'e2', status:'active', dept:'Supply Chain Management', position:'Stock Officer',        work_status:'Full time', emp_id:'680084',  branch:'HQ (คลังสินค้า)',  nick:'(เดโม)',     name:'นาย เดโม สอง',        name_en:'Mr. Demo Two',      join_date:'2025-06-04', birth_date:'1992-11-15', salary:'18000', created_at:'2025-06-04T00:00:00Z' },
+  { id:'e3', status:'active', dept:'Human Resources',         position:'Recruitment Officer', work_status:'Full time', emp_id:'100025',  branch:'Head Office',      nick:'(พรีวิว)',   name:'น.ส. พรีวิว สาม',      name_en:'Ms. Preview Three', join_date:'2024-08-04', birth_date:'2000-02-05', salary:'22000', created_at:'2024-08-04T00:00:00Z' },
+  { id:'e4', status:'active', dept:'Marketing',               position:'Graphic Designer',    work_status:'Part time', emp_id:'102013',  branch:'Head Office',      nick:'(ตัวอย่าง)', name:'นาย ตัวอย่าง สี่',     name_en:'Mr. Sample Four',   join_date:'2025-11-05', birth_date:'1998-10-31', salary:'25000', created_at:'2025-11-05T00:00:00Z' },
+  { id:'e5', status:'resign', dept:'Operations',              position:'Sales-Part Time',     work_status:'Part time', emp_id:'680091',  branch:'Central Lardprao', nick:'(ตัวอย่าง)', name:'น.ส. ตัวอย่าง หก',    name_en:'Ms. Example Six',   join_date:'2024-06-19', birth_date:'2002-08-14', salary:'12000', resign_date:'2025-09-15', reason:'ได้งานใหม่', detail:'-', created_at:'2024-06-19T00:00:00Z' },
+  { id:'e6', status:'resign', dept:'Human Resources',         position:'HR Operations Officer',work_status:'Full time', emp_id:'100008', branch:'Head Office',      nick:'(พรีวิว)',   name:'น.ส. พรีวิว แปด',      name_en:'Ms. Preview Eight', join_date:'2025-02-10', birth_date:'1995-06-09', salary:'20000', resign_date:'2025-08-08', reason:'ไม่ผ่านการทดลองงาน', detail:'-', created_at:'2025-02-10T00:00:00Z' },
+];
+// ----- จำลองข้อมูลปริมาณจริง: HQ 10 ฝ่าย ~100+ คน + สาขา 14 สาขา (เพื่อทดสอบเพจกราฟ) -----
+(function(){
+  const p2 = (n) => String(n).padStart(2,'0');
+  let gid = 1000;
+  const HQ_DEPTS = ['Human Resources','Information Technology','Operations','Marketing','Business Development','Supply Chain Management','Finance','Learning & Development','Project Management','Legal'];
+  HQ_DEPTS.forEach((d, di) => {
+    const cnt = 8 + (di % 5);                 // 8..12 คน/ฝ่าย → ~100 คน
+    for (let i = 0; i < cnt; i++) {
+      const male = (i + di) % 2 === 0;
+      _emps.push({ id:'gh'+(++gid), status:'active', dept:d, position:'Officer', work_status: i % 7 === 0 ? 'Part time' : 'Full time',
+        emp_id:'H'+(1000+gid), branch:'Head Office', nick:'', name:(male?'นาย':'น.ส.')+' '+d.split(' ')[0]+' '+(i+1), name_en:'',
+        join_date:'2025-'+p2((di%12)+1)+'-'+p2((i%27)+1), birth_date:(1985+(i%20))+'-'+p2((di%12)+1)+'-15', salary:'20000' });
+    }
+  });
+  for (let b = 1; b <= 14; b++) {
+    const cnt = 5 + (b % 9);                   // 5..13 คน/สาขา
+    for (let i = 0; i < cnt; i++) {
+      const male = (i + b) % 2 === 0;
+      _emps.push({ id:'gb'+(++gid), status:'active', dept:'Operations', position:'Staff', work_status: i % 4 === 0 ? 'Part time' : 'Full time',
+        emp_id:'B'+(2000+gid), branch:'สาขา '+b, nick:'', name:(male?'นาย':'น.ส.')+' สาขา'+b+' '+(i+1), name_en:'',
+        join_date:'2025-'+p2((b%12)+1)+'-'+p2((i%27)+1), birth_date:(1995+(i%12))+'-06-10', salary:'13000' });
+    }
+  }
+})();
+async function listEmployees(){ return _emps.map(e=>JSON.parse(JSON.stringify(e))); }
+async function createEmployee(p){ const r={ id:'e'+(++_seq), created_at:_nowIso(), ...p }; _emps.push(r); return JSON.parse(JSON.stringify(r)); }
+async function updateEmployee(id, patch){ const i=_emps.findIndex(e=>e.id===id); if(i>=0) _emps[i]={ ..._emps[i], ...patch, id }; return JSON.parse(JSON.stringify(_emps[i])); }
+async function deleteEmployee(id){ const i=_emps.findIndex(e=>e.id===id); if(i>=0) _emps.splice(i,1); }
 /* ===================== END MOCK BACKEND ===================== */
 `;
 

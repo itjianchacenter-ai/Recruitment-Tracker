@@ -37,9 +37,5 @@ create policy "auth insert branches" on public.branches for insert to authentica
 create policy "auth update branches" on public.branches for update to authenticated using (true) with check (true);
 create policy "auth delete branches" on public.branches for delete to authenticated using (true);
 
--- (optional) seed ONE sample branch — only when the table is still empty, so
--- re-running this file is safe (won't duplicate). Delete/edit it in the app.
-insert into public.branches (brand, name, target_pax, sort_order, manning)
-select 'JIAN CHA', 'Central Lardprao', 16, 1,
-  '{"sm":[{"name":"สุนันทา กระวีนทร์","nick":"ต้นน้ำ","status":"filled","badge":"รักษาการ"}],"asm":[{"name":"ธนกร ดุษฎีเดช","nick":"ดีโอ","status":"filled"},{"status":"hold"}],"staff":[{"name":"Min Zaw Khaing","nick":"ลุย","status":"filled"},{"status":"hold"},{"status":"hold"}]}'::jsonb
-where not exists (select 1 from public.branches);
+-- ไม่มีการ seed ข้อมูลตัวอย่างใด ๆ — ไฟล์นี้สร้างเฉพาะโครงสร้าง + RLS เท่านั้น
+-- (กันข้อมูลเดโม้ทับซ้อนกับข้อมูลจริง) · เพิ่มสาขาเองผ่านแอป "+ เพิ่มสาขา"

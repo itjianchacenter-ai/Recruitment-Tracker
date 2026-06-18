@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>ATS · Candidate Database (Preview)</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  body{font-family:'Noto Sans Thai',system-ui,sans-serif;background:#f1f5f9;color:#0f172a;}
+  .chip{font-size:10px;padding:1px 8px;border-radius:999px;}
+  select,input,textarea{outline:none}
+  select:focus,input:focus,textarea:focus{box-shadow:0 0 0 2px #cbd5e1}
+</style>
+</head>
+<body class="min-h-screen">
+  <div class="max-w-4xl mx-auto p-4 sm:p-6">
+
+    <!-- header -->
+    <div class="flex items-center justify-between gap-3 flex-wrap mb-5">
+      <div class="flex items-center gap-3">
+        <div class="w-10 h-10 rounded-xl bg-slate-900 grid place-items-center text-white text-lg">🗂</div>
+        <div>
+          <h1 class="text-lg font-semibold">Candidate Database <span class="text-xs font-normal text-slate-400">· ATS</span></h1>
+          <p class="text-xs text-slate-500">คลังผู้สมัครแยกตามตำแหน่ง · <span id="total"></span></p>
+        </div>
+      </div>
+      <button id="addBtn" class="inline-flex items-center gap-1.5 bg-slate-900 hover:bg-slate-800 text-white text-sm font-medium px-3.5 py-2 rounded-lg">⬆️ อัปโหลด Resume</button>
+    </div>
+
+    <!-- tabs -->
+    <div id="tabs" class="flex gap-2 flex-wrap mb-4"></div>
+
+    <!-- body -->
+    <div id="body"></div>
+
+    <p class="text-[11px] text-slate-400 text-center mt-8">พรีวิว ATS · regex อ่าน resume ทำงานจริงในหน้านี้ · ข้อมูลเก็บในหน่วยความจำ (รีเฟรชแล้วรีเซ็ต) · ข้อมูลไม่ออกนอกเบราว์เซอร์</p>
+  </div>
+
+<script>
+if (window.pdfjsLib) pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+
+var STAGES=['Applied/Sourced','Pre-Screen','Hiring Manager Review','Onsite Interview','Online Interview','Passed','Not Passed','Offered','Hired'];
+var SC={'Applied/Sourced':'#92400E','Pre-Screen':'#854F0B','Hiring Manager Review':'#C2570C','Onsite Interview':'#185FA5','Online Interview':'#6D28D9','Passed':'#0F6E56','Not Passed':'#A32D2D','Offered':'#BE185D','Hired':'#047857'};
+var POS=['Barista','Store Manager','Marketing Officer'];
+var SOURCES=['Job Thai','Jobs DB','Job Fin Fin','Job BKK','Facebook','LinkedIn','Head-hunting','Refer'];
+var REASONS=['Over age limit','Salary exceeds budget','Long commuting distance','Accepted another job offer'];
+var THMON=['ม.ค.','ก.พ.','มี.ค.','เม.ย.','พ.ค.','มิ.ย.','ก.ค.','ส.ค.','ก.ย.','ต.ค.','พ.ย.','ธ.ค.'];
+function fmtDate(iso){ if(!iso)return '-'; var p=String(iso).slice(0,10).split('-'); if(p.length<3)return iso; return parseInt(p[2],10)+' '+THMON[parseInt(p[1],10)-1]+' '+(parseInt(p[0],10)+543); }
+function todayISO(){ try{return new Date().toISOString().slice(0,10);}catch(e){return '';} }
+var DB={
+  'Barista':[{name:'ณิชา พริ้มเพรา',phone:'081-222-3344',email:'nicha.p@gmail.com',source:'Jobs DB',date:'2026-06-10',stage:'Onsite Interview',ai:false}],
+  'Store Manager':[{name:'วีรชัย ตั้งมั่น',phone:'086-555-7788',email:'weerachai.t@gmail.com',source:'Refer',date:'2026-06-15',stage:'Offered',ai:false}],
+  'Marketing Officer':[]
+};
+var SAMPLE={
+  'Barista':"นางสาว สมหญิง รักงาน\nตำแหน่งที่สนใจ: Barista\nโทร. 081-234-5678  อีเมล somying.r@gmail.com\nประสบการณ์: บาริสต้า 2 ปี Cafe Amazon\nทักษะ: ชงกาแฟ, Latte art, บริการลูกค้า\nเงินเดือนที่คาดหวัง: 16,000",
+  'Store Manager':"John Smith\nPosition: Store Manager\nTel 089-876-5432  Email john.smith@outlook.com\nExperience: 5 yrs retail F&B\nSkills: Team management, P&L, Inventory\nExpected salary: 40,000",
+  'Marketing Officer':"นาย ภาคิน วงศ์ดี\nสมัครตำแหน่ง: Marketing Officer\nมือถือ 062-111-2222 · e-mail pakin.w@gmail.com\nประสบการณ์ Digital Marketing 3 ปี เพจ F&B\nทักษะ: Content, Facebook Ads, Canva\nคาดหวัง 28,000"
+};
+var cur='Barista', view='list', form=null;
+
+function extract(t){
+  var email=(t.match(/[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}/)||[])[0]||'';
+  var phone=(t.match(/0\d{1,2}[-\s.]?\d{3}[-\s.]?\d{3,4}/)||[])[0]||''; if(phone) phone=phone.replace(/[\s.]/g,'-');
+  var lines=t.split(/\n/).map(function(s){return s.trim();}).filter(Boolean), name='';
+  for(var i=0;i<lines.length;i++){var L=lines[i];
+    if(/@|โทร|มือถือ|tel|email|http|ตำแหน่ง|position|สมัคร|ประสบการณ์|ทักษะ|skill|exp|คาดหวัง|salary/i.test(L))continue;
+    if((L.match(/\d/g)||[]).length>2)continue;
+    if(L.length>=3&&L.length<=60){name=L;break;}}
+  return {name:name,phone:phone,email:email};
+}
+function esc(s){return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');}
+function chips(s){ if(!s)return ''; var a=Array.isArray(s)?s:String(s).split(/[,·]/).map(function(x){return x.trim();}).filter(Boolean); return a.map(function(x){return '<span class="chip bg-slate-100 text-slate-600">'+esc(x)+'</span>';}).join(' '); }
+
+function tabs(){
+  var tot=POS.reduce(function(a,p){return a+DB[p].length;},0);
+  document.getElementById('total').textContent='รวม '+tot+' คน';
+  document.getElementById('tabs').innerHTML=POS.map(function(p){var a=cur===p&&view==='list';
+    return '<button data-p="'+p+'" class="text-xs px-3.5 py-1.5 rounded-xl border '+(a?'bg-slate-900 text-white border-slate-900':'bg-white text-slate-600 border-slate-200 hover:border-slate-300')+'">'+p+' <span class="opacity-70">('+DB[p].length+')</span></button>';
+  }).join('')
+  + '<button id="addPos" class="text-xs px-3 py-1.5 rounded-xl border border-dashed border-slate-300 text-slate-500 hover:border-slate-400 hover:text-slate-700">＋ เพิ่มตำแหน่ง</button>';
+  document.querySelectorAll('#tabs button[data-p]').forEach(function(b){b.onclick=function(){cur=b.getAttribute('data-p');view='list';render();};});
+  document.getElementById('addPos').onclick=function(){
+    var n=prompt('ชื่อตำแหน่งใหม่ (เช่น Cashier, Marketing Officer)');
+    if(n&&n.trim()){ n=n.trim(); if(DB[n]){ alert('มีตำแหน่งนี้อยู่แล้ว'); } else { POS.push(n); DB[n]=[]; } cur=n; view='list'; render(); }
+  };
+}
+function listView(){
+  var rows=DB[cur];
+  if(rows.length===0) return '<div class="text-center py-12 text-sm text-slate-400 bg-white border border-dashed border-slate-300 rounded-xl">ยังไม่มีผู้สมัครในตำแหน่ง '+esc(cur)+' · กด "อัปโหลด Resume"</div>';
+  return '<div class="space-y-2.5">'+rows.map(function(c,i){var sc=SC[c.stage];
+    return '<div class="bg-white border border-slate-200 rounded-xl p-3.5">'
+    +'<div class="flex items-start justify-between gap-3 flex-wrap">'
+    +'<div class="min-w-0"><div class="text-sm font-medium">'+esc(c.name)+(c.ai?' <span class="chip bg-violet-100 text-violet-700">✨ auto</span>':'')+'</div>'
+    +'<div class="text-[11px] text-slate-500 mt-0.5">📞 '+esc(c.phone)+' &nbsp; ✉️ '+esc(c.email)+'</div></div>'
+    +'<select data-i="'+i+'" class="stg text-[11px] border border-slate-200 rounded-lg px-2 py-1" style="color:'+sc+'">'+STAGES.map(function(s){return '<option'+(s===c.stage?' selected':'')+'>'+s+'</option>';}).join('')+'</select></div>'
+    +'<div class="flex items-center justify-between gap-3 mt-2 flex-wrap">'
+    +'<div class="text-[11px] text-slate-500"><span class="chip bg-slate-100 text-slate-600">🏷️ '+esc(c.source||'-')+'</span> &nbsp; 📅 '+fmtDate(c.date)+(c.salary?' &nbsp; 💰 '+esc(c.salary)+' ฿':'')+'</div>'
+    +'<a href="#" class="text-[11px] text-sky-600">📄 resume</a></div>'
+    + (c.stage==='Not Passed' ? '<div class="flex items-center gap-2 mt-2 pt-2 border-t border-rose-100"><span class="text-[11px] text-rose-600">เหตุผลตกรอบ:</span><select data-i="'+i+'" class="rsn text-[11px] border border-rose-200 rounded-lg px-2 py-1 text-rose-700"><option value="">— เลือก —</option>'+REASONS.map(function(r){return '<option'+(r===c.reason?' selected':'')+'>'+r+'</option>';}).join('')+'</select></div>' : '')
+    +'</div>';
+  }).join('')+'</div>';
+}
+function uploadView(){
+  var f=form;
+  var fld=function(k,label){return '<div><div class="text-[11px] text-slate-500">'+label+(f.parsed?' <span class="text-emerald-600">✓ auto</span>':'')+'</div><input id="f_'+k+'" value="'+esc(f[k])+'" class="w-full text-xs border border-slate-200 rounded-lg px-2 py-1.5 mt-0.5"></div>';};
+  return '<div class="bg-white border border-slate-200 rounded-xl p-4">'
+    +'<div class="flex items-center justify-between gap-3 mb-3"><div class="text-sm font-medium">📤 เพิ่มผู้สมัคร · อ่าน resume อัตโนมัติ</div><button id="back" class="text-[11px] px-2.5 py-1 rounded-lg border border-slate-200">← กลับคลัง</button></div>'
+    +'<div class="grid sm:grid-cols-2 gap-3">'
+      +'<div class="border border-dashed border-slate-300 rounded-lg p-3 text-center">'
+        +'<div class="text-xs text-slate-500 mb-2">ลากไฟล์ PDF/Word มาวาง หรือ</div>'
+        +'<label class="inline-block text-xs bg-slate-900 text-white px-3 py-1.5 rounded-lg cursor-pointer">📎 เลือกไฟล์ resume<input id="file" type="file" accept=".pdf,.txt" class="hidden"></label>'
+        +'<div id="fname" class="text-[11px] text-slate-400 mt-2">รองรับ PDF (พิมพ์มา) / .txt · รูปสแกนยังอ่านไม่ได้</div>'
+      +'</div>'
+      +'<div><div class="text-[11px] text-slate-500 mb-1">หรือวางข้อความจาก resume:</div><textarea id="rtext" class="w-full text-[11px] leading-relaxed border border-slate-200 rounded-lg p-2" style="min-height:96px">'+esc(f.text)+'</textarea></div>'
+    +'</div>'
+    +'<button id="parse" class="text-xs mt-3 bg-violet-600 hover:bg-violet-700 text-white px-3 py-1.5 rounded-lg">🔍 อ่านข้อมูล (regex)</button>'
+    + (f.parsed? '<div class="border-t border-slate-100 mt-4 pt-3">'
+        +'<div class="grid sm:grid-cols-2 gap-3">'+fld('name','ชื่อ-สกุล')+fld('phone','เบอร์โทร')+fld('email','อีเมล')+'</div>'
+        +'<div class="mt-2"><div class="text-[11px] text-slate-500">เงินเดือนคาดหวัง (บาท) <span class="text-slate-400">— กรอกเอง</span></div><input id="f_salary" value="'+esc(f.salary||'')+'" inputmode="numeric" placeholder="เช่น 18000" class="w-full sm:w-48 text-xs border border-slate-200 rounded-lg px-2 py-1.5 mt-0.5"></div>'
+        +'<div class="flex items-center gap-3 mt-3 flex-wrap">'
+          +'<div class="flex items-center gap-2"><span class="text-[11px] text-slate-500">เข้าคลังตำแหน่ง:</span><select id="f_pos" class="text-xs border border-slate-200 rounded-lg px-2 py-1">'+POS.map(function(p){return '<option'+(p===f.pos?' selected':'')+'>'+p+'</option>';}).join('')+'</select></div>'
+          +'<div class="flex items-center gap-2"><span class="text-[11px] text-slate-500">ช่องทางที่มา:</span><select id="f_source" class="text-xs border border-slate-200 rounded-lg px-2 py-1">'+SOURCES.map(function(s){return '<option'+(s===f.source?' selected':'')+'>'+s+'</option>';}).join('')+'<option value="__add__">＋ เพิ่มช่องทางใหม่…</option></select></div>'
+        +'</div>'
+        +'<div class="flex justify-end gap-2 mt-3"><button id="cancelU" class="text-xs px-3 py-1.5 text-slate-600">ยกเลิก</button><button id="saveU" class="text-xs bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-lg">✓ บันทึกเข้าคลัง</button></div>'
+      +'</div>':'')
+    +'</div>';
+}
+function fillFromText(t){ form.text=t; var r=extract(t); form.name=r.name;form.phone=r.phone;form.email=r.email;form.parsed=true; render(); }
+async function readPDF(file){
+  var buf=await file.arrayBuffer();
+  var pdf=await pdfjsLib.getDocument({data:buf}).promise;
+  var txt='';
+  for(var p=1;p<=pdf.numPages;p++){ var page=await pdf.getPage(p); var c=await page.getTextContent(); txt+=c.items.map(function(it){return it.str;}).join(' ')+'\n'; }
+  return txt;
+}
+function bind(){
+  document.getElementById('addBtn').onclick=function(){view='upload'; form={text:SAMPLE[cur]||'',name:'',phone:'',email:'',salary:'',pos:cur,source:SOURCES[0],parsed:false}; render();};
+  document.querySelectorAll('.stg').forEach(function(s){s.onchange=function(){DB[cur][+s.getAttribute('data-i')].stage=s.value; render();};});
+  document.querySelectorAll('.rsn').forEach(function(s){s.onchange=function(){DB[cur][+s.getAttribute('data-i')].reason=s.value;};});
+  var back=document.getElementById('back'); if(back)back.onclick=function(){view='list';form=null;render();};
+  var cu=document.getElementById('cancelU'); if(cu)cu.onclick=function(){view='list';form=null;render();};
+  var rt=document.getElementById('rtext'); if(rt)rt.oninput=function(){form.text=rt.value;};
+  var pb=document.getElementById('parse'); if(pb)pb.onclick=function(){fillFromText(form.text);};
+  var fi=document.getElementById('file'); if(fi)fi.onchange=async function(){
+    var file=fi.files[0]; if(!file)return; document.getElementById('fname').textContent='⏳ กำลังอ่าน '+file.name+'…';
+    try{ var text = /\.pdf$/i.test(file.name) ? await readPDF(file) : await file.text(); fillFromText(text); }
+    catch(e){ document.getElementById('fname').textContent='อ่านไฟล์ไม่ได้ (อาจเป็นรูปสแกน) — ลองวางข้อความแทน'; }
+  };
+  ['name','phone','email','salary'].forEach(function(k){var el=document.getElementById('f_'+k); if(el)el.oninput=function(){form[k]=el.value;};});
+  var ps=document.getElementById('f_pos'); if(ps)ps.onchange=function(){form.pos=ps.value;};
+  var psrc=document.getElementById('f_source'); if(psrc)psrc.onchange=function(){
+    if(psrc.value==='__add__'){ var n=prompt('ชื่อช่องทางใหม่ (เช่น TikTok, Walk-in, เว็บบริษัท)'); if(n&&n.trim()){ n=n.trim(); if(SOURCES.indexOf(n)<0)SOURCES.push(n); form.source=n; } render(); }
+    else form.source=psrc.value;
+  };
+  var su=document.getElementById('saveU'); if(su)su.onclick=function(){DB[form.pos].push({name:form.name||'(ไม่ระบุชื่อ)',phone:form.phone,email:form.email,source:form.source,salary:(form.salary||'').trim(),date:todayISO(),stage:'Applied/Sourced',reason:'',ai:true}); cur=form.pos; view='list'; form=null; render();};
+}
+function render(){ tabs(); document.getElementById('body').innerHTML = view==='list'?listView():uploadView(); bind(); }
+render();
+</script>
+</body>
+</html>

@@ -3,10 +3,13 @@
 import {
   listCandidates, createCandidate, updateCandidate, deleteCandidate,
   subscribeCandidates, signIn, signOut, getSession, onAuthChange,
-  actorFromSession, roleFromSession, usernameToEmail,
+  actorFromSession, roleFromSession, levelFromSession, usernameToEmail,
   adminListUsers, adminCreateUser, adminResetPassword, adminDeleteUser,
   findUnregisteredEmails, getClientIp, uploadFile, getSignedUrl,
-  listBranches, createBranch, updateBranch, deleteBranch
+  listBranches, createBranch, updateBranch, deleteBranch,
+  listAtsPositions, createAtsPosition, listAtsSources, createAtsSource,
+  listAtsCandidates, createAtsCandidate, updateAtsCandidate, deleteAtsCandidate, uploadResume,
+  listEmployees, createEmployee, updateEmployee, deleteEmployee
 } from './lib/supabase.js';
 
 // ---------------------------------------------------------------------------
@@ -444,6 +447,11 @@ function toRow(c) {
     // =========================================================================
     // Toast (simple, app-wide)
     // =========================================================================
+    // Permission tier (module-level so any component can gate without prop-drilling).
+    // canEdit() = true เฉพาะ admin Level 2 · Level 1 = read-only (ซ่อนปุ่มแก้ไข)
+    let _canEdit = true;
+    function canEdit() { return _canEdit; }
+
     let toastSetter = null;
     function showToast(message, type='info') {
       if (toastSetter) toastSetter({ id: Date.now(), message, type });
@@ -4015,233 +4023,277 @@ ${HR_EMAIL}`;
     // =========================================================================
     // Reports / KPI view — everything we can extract from the candidate records
     // =========================================================================
-    function ReportsView({ candidates }) {
-      const R = useMemo(() => {
-        const now = new Date(today());
-        const yr = now.getFullYear(), mo = now.getMonth();
-        const inThisMonth = (iso) => { if (!iso) return false; const d = new Date(iso); return d.getFullYear() === yr && d.getMonth() === mo; };
-        const monthLabel = now.toLocaleDateString('th-TH', { month:'long', year:'numeric' });
-
-        const stepDate = (c, step) => c.steps?.find(s => s.step === step)?.completedDate ?? null;
-        const offerApprovedDate = (c) => c.approvalWorkflows?.[5]?.completedAt ?? stepDate(c, 5);
-
-        // ---- This month ----
-        const openedThisMonth   = candidates.filter(c => inThisMonth(c.process_start_date));
-        const filledThisMonth   = candidates.filter(c => { const d = offerApprovedDate(c); return d && inThisMonth(d); });
-        const passedThisMonth   = candidates.filter(c => c.probation?.returnDate && inThisMonth(c.probation.returnDate));
-        const cancelledTotal    = candidates.filter(c => c.status === 'cancelled' || c.status === 'rejected');
-
-        // ---- Pipeline funnel (active only) ----
-        const active = candidates.filter(c => c.status === 'active');
-        const funnel = STEPS.map(s => ({ id:s.id, name:s.name, thai:s.thai, count: active.filter(c => c.current_step === s.id).length }));
-        const funnelMax = Math.max(1, ...funnel.map(f => f.count));
-
-        // ---- Time-to-fill: process_start → offer approved (Step 5 complete) ----
-        const ttfList = candidates.map(c => { const d = offerApprovedDate(c); return d ? daysBetween(c.process_start_date, d) : null; }).filter(x => x != null && x >= 0);
-        const avgTTF = ttfList.length ? Math.round(ttfList.reduce((a,b)=>a+b,0)/ttfList.length) : null;
-
-        // ---- Sourcing SLA (Step 2 completed within 30 days) ----
-        const step2List = candidates.map(c => { const d = stepDate(c,2); return d ? daysBetween(c.process_start_date, d) : null; }).filter(x => x != null && x >= 0);
-        const slaMet = step2List.filter(x => x <= STEP_2_DEADLINE_DAYS).length;
-        const slaPct = step2List.length ? Math.round(slaMet/step2List.length*100) : null;
-
-        // ---- Overdue right now ----
-        const overdue = active.filter(c => deriveStatus(c).tone === 'red');
-
-        // ---- Approval cycle time (Step 1 & 5): createdAt → completedAt ----
-        const apprTimes = [];
-        candidates.forEach(c => [1,5].forEach(st => { const wf = c.approvalWorkflows?.[st]; if (wf?.status === 'completed' && wf.createdAt && wf.completedAt) apprTimes.push(daysBetween(wf.createdAt, wf.completedAt)); }));
-        const avgApprove = apprTimes.length ? (apprTimes.reduce((a,b)=>a+b,0)/apprTimes.length).toFixed(1) : null;
-
-        // ---- By department ----
-        const depts = Array.from(new Set(candidates.map(c => c.department)));
-        const byDept = depts.map(d => {
-          const list = candidates.filter(c => c.department === d);
-          return { dept:d, total:list.length, active:list.filter(c=>c.status==='active').length, passed:list.filter(c=>c.status==='passed').length, overdue:list.filter(c=>deriveStatus(c).tone==='red').length };
-        }).sort((a,b)=>b.total-a.total);
-        const deptMax = Math.max(1, ...byDept.map(d => d.total));
-
-        // ---- Probation health ----
-        const inProb = candidates.filter(c => c.current_step === TOTAL_STEPS && c.status === 'active');
-        const probScores = [];
-        candidates.forEach(c => { const ms = c.probation?.milestones; if (ms) ['day30','day60','day90','day120'].forEach(k => { if (ms[k]?.score != null) probScores.push(ms[k].score); }); });
-        const avgProbScore = probScores.length ? (probScores.reduce((a,b)=>a+b,0)/probScores.length).toFixed(1) : null;
-        // upcoming probation evaluations due (next milestone not done, within 14 days)
-        const upcomingEvals = [];
-        inProb.forEach(c => {
-          const start = c.probation?.startDate; if (!start) return;
-          [['day30',30],['day60',60],['day90',90],['day120',119]].forEach(([k,d]) => {
-            if (!c.probation?.milestones?.[k]?.done) {
-              const dueIn = daysBetween(today(), addDays(start, d));
-              if (dueIn >= -7 && dueIn <= 21) upcomingEvals.push({ name:c.name, position:c.position, round:k, dueDate:addDays(start,d), dueIn });
-            }
-          });
-        });
-        upcomingEvals.sort((a,b)=>a.dueIn-b.dueIn);
-
-        // ---- Compensation snapshot (approved offers, generatedDocs[5]) ----
-        const offers = candidates.map(c => c.generatedDocs?.[5]?.data).filter(Boolean);
-        const salaries = offers.map(o => parseMoney(o.salary_new)).filter(x => x > 0);
-        const incomes  = offers.map(o => o.total_income != null ? o.total_income : parseMoney(o.salary_new)).filter(x => x > 0);
-        const avgSalary = salaries.length ? Math.round(salaries.reduce((a,b)=>a+b,0)/salaries.length) : null;
-        const avgIncome = incomes.length ? Math.round(incomes.reduce((a,b)=>a+b,0)/incomes.length) : null;
-
-        // ---- Recruiter workload (steps completed by) ----
-        const workload = {};
-        candidates.forEach(c => (c.steps||[]).forEach(s => { if (s.completedBy) workload[s.completedBy] = (workload[s.completedBy]||0)+1; }));
-        const workloadList = Object.entries(workload).map(([name,count]) => ({ name, count })).sort((a,b)=>b.count-a.count);
-        const workloadMax = Math.max(1, ...workloadList.map(w => w.count));
-
-        // ---- Type / source mix ----
-        const replacement = candidates.filter(c => c.type === 'replacement').length;
-        const newHC = candidates.filter(c => c.type === 'new_headcount').length;
-
-        return { monthLabel, openedThisMonth, filledThisMonth, passedThisMonth, cancelledTotal,
-          funnel, funnelMax, active, avgTTF, ttfList, slaPct, slaMet, step2List, overdue,
-          avgApprove, apprTimes, byDept, deptMax, inProb, avgProbScore, probScores, upcomingEvals,
-          avgSalary, avgIncome, offers, workloadList, workloadMax, replacement, newHC };
-      }, [candidates]);
-
-      const Bar = ({ value, max, color }) => (
-        <div className="flex-1 h-2.5 bg-slate-100 rounded-full overflow-hidden">
-          <div className={`h-full ${color} rounded-full`} style={{ width:`${Math.round(value/max*100)}%` }} />
-        </div>
-      );
-      const Big = ({ label, value, sub, tone }) => {
-        const map = { slate:'text-slate-900', sky:'text-sky-600', emerald:'text-emerald-600', rose:'text-rose-600', amber:'text-amber-600', indigo:'text-indigo-600' };
-        return (
-          <div className="bg-white rounded-2xl border border-slate-200 p-4">
-            <div className="text-xs text-slate-500">{label}</div>
-            <div className={`text-2xl font-bold ${map[tone]||map.slate}`}>{value}</div>
-            {sub && <div className="text-[11px] text-slate-400 mt-0.5">{sub}</div>}
-          </div>
-        );
-      };
-      const Panel = ({ title, hint, children }) => (
-        <div className="bg-white rounded-2xl border border-slate-200 p-4">
-          <div className="flex items-baseline justify-between mb-3">
-            <h3 className="text-sm font-semibold text-slate-800">{title}</h3>
-            {hint && <span className="text-[11px] text-slate-400">{hint}</span>}
-          </div>
-          {children}
-        </div>
-      );
-
+    // Stacked bar chart (Full time = blue · Part time = orange) — pure HTML/Tailwind, no chart lib
+    function StackedBarChart({ title, data }) {
+      const [page, setPage] = useState(0);
+      const [mode, setMode] = useState('count');   // 'count' = จำนวนคน · 'budget' = รวมเงินเดือนทีม/สาขา
+      const PER = 10;
+      const pages = Math.max(1, Math.ceil(data.length / PER));
+      const pg = Math.min(page, pages - 1);
+      const shown = data.slice(pg * PER, pg * PER + PER);
+      const pad = Array.from({ length: PER - shown.length });
+      const money = mode === 'budget';
+      const val = (d) => money ? { full: d.fullB || 0, part: d.partB || 0 } : { full: d.full, part: d.part };
+      const peak = Math.max(1, ...data.map(d => { const v = val(d); return v.full + v.part; }));   // y-scale จากทุกหน้า เทียบกันได้
+      let step, niceMax;
+      if (money) {
+        const rough = Math.max(1, peak / 5), mag = Math.pow(10, Math.floor(Math.log10(rough))), norm = rough / mag;
+        step = (norm <= 1 ? 1 : norm <= 2 ? 2 : norm <= 5 ? 5 : 10) * mag;
+      } else {
+        step = peak <= 10 ? 2 : peak <= 30 ? 5 : peak <= 60 ? 10 : peak <= 150 ? 20 : 50;
+      }
+      niceMax = Math.max(step, Math.ceil(peak / step) * step);
+      const ticks = []; for (let v = 0; v <= niceMax + 1e-6; v += step) ticks.push(v);
+      const fmtTick = (v) => money ? (v >= 1000 ? +(v / 1000).toFixed(v % 1000 ? 1 : 0) + 'k' : String(Math.round(v))) : String(v);
+      const fmtVal = (v) => money ? Number(v).toLocaleString('en-US') + ' ฿' : String(v);
+      const seg = (on, cls) => 'text-[10px] px-2 py-0.5 rounded-md border ' + (on ? cls : 'bg-white text-slate-500 border-slate-200 hover:border-slate-300');
+      const cFull = money ? 'bg-emerald-600' : 'bg-blue-500';   // budget = เขียว · headcount = น้ำเงิน/ส้ม
+      const cPart = money ? 'bg-lime-400' : 'bg-orange-400';
+      const H = 200;
       return (
-        <div className="space-y-6">
-          {/* This month */}
-          <div>
-            <div className="text-sm font-semibold text-slate-700 mb-2">📅 สรุปเดือนนี้ · {R.monthLabel}</div>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-              <Big tone="sky"     label="เปิดตำแหน่งใหม่"        value={R.openedThisMonth.length} sub="New requisitions" />
-              <Big tone="amber"   label="ได้ผู้สมัคร (อนุมัติ Offer)" value={R.filledThisMonth.length} sub="Positions filled" />
-              <Big tone="emerald" label="ผ่านโปรเดือนนี้"        value={R.passedThisMonth.length} sub="Passed probation" />
-              <Big tone="rose"    label="เกิน Deadline ตอนนี้"   value={R.overdue.length} sub="ต้อง follow up ด่วน" />
+        <div className="bg-white border border-slate-200 rounded-2xl p-4">
+          <div className="flex items-center gap-2 mb-3">
+            <div className="flex items-center gap-1 shrink-0">
+              <button onClick={() => setMode('count')} className={seg(mode==='count','bg-indigo-600 text-white border-indigo-600')} title="แสดงตามจำนวนคน">Headcount</button>
+              <button onClick={() => setMode('budget')} className={seg(mode==='budget','bg-emerald-600 text-white border-emerald-600')} title="แสดงตามบัทเจท (รวมเงินเดือนทีม/สาขา)">Budget</button>
+            </div>
+            <div className="flex-1 text-sm font-semibold text-slate-800 text-center truncate">{title}{money ? ' (บาท)' : ''}</div>
+            <div className="shrink-0 flex items-center gap-1 text-xs justify-end" style={{ minWidth: 64 }}>
+              {pages > 1 && (<>
+                <button onClick={() => setPage(Math.max(0, pg - 1))} disabled={pg === 0} className="w-6 h-6 grid place-items-center rounded-md border border-slate-200 text-slate-500 disabled:opacity-30 hover:border-slate-300 ibtn">‹</button>
+                <span className="text-slate-400 tabular-nums">{pg + 1}/{pages}</span>
+                <button onClick={() => setPage(Math.min(pages - 1, pg + 1))} disabled={pg >= pages - 1} className="w-6 h-6 grid place-items-center rounded-md border border-slate-200 text-slate-500 disabled:opacity-30 hover:border-slate-300 ibtn">›</button>
+              </>)}
             </div>
           </div>
-
-          {/* KPI strip */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            <Big tone="indigo"  label="Time-to-fill เฉลี่ย"   value={R.avgTTF != null ? `${R.avgTTF} วัน` : '—'} sub="เปิดอัตรา → อนุมัติ Offer" />
-            <Big tone="sky"     label="Sourcing SLA (≤30 วัน)" value={R.slaPct != null ? `${R.slaPct}%` : '—'} sub={`ทำได้ ${R.slaMet}/${R.step2List.length} ตำแหน่ง`} />
-            <Big tone="emerald" label="เวลาอนุมัติเฉลี่ย"       value={R.avgApprove != null ? `${R.avgApprove} วัน` : '—'} sub="Step 1 & 6 (สร้าง → เซ็นครบ)" />
-            <Big tone="slate"   label="กำลังดำเนินการ"         value={R.active.length} sub={`ทดแทน ${R.replacement} · ใหม่ ${R.newHC}`} />
-          </div>
-
-          {/* Funnel + Department */}
-          <div className="grid md:grid-cols-2 gap-4">
-            <Panel title="🔻 Pipeline Funnel" hint="ตำแหน่งที่ active แยกตาม Step">
-              <div className="space-y-2">
-                {R.funnel.map(f => (
-                  <div key={f.id} className="flex items-center gap-2 text-xs">
-                    <div className="w-7 text-slate-400 text-right">{f.id}</div>
-                    <div className="w-40 truncate text-slate-600">{f.thai}</div>
-                    <Bar value={f.count} max={R.funnelMax} color="bg-sky-500" />
-                    <div className="w-6 text-right font-semibold text-slate-700">{f.count}</div>
-                  </div>
-                ))}
-              </div>
-            </Panel>
-
-            <Panel title="🏢 แยกตามแผนก" hint="total · active · ผ่านโปร">
-              <div className="space-y-2">
-                {R.byDept.map(d => (
-                  <div key={d.dept} className="flex items-center gap-2 text-xs">
-                    <div className="w-32 truncate text-slate-600">{d.dept}</div>
-                    <Bar value={d.total} max={R.deptMax} color="bg-indigo-500" />
-                    <div className="w-24 text-right text-slate-500">
-                      <b className="text-slate-700">{d.total}</b> · {d.active}🔵 · {d.passed}✓{d.overdue ? ` · ${d.overdue}⚠` : ''}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </Panel>
-          </div>
-
-          {/* Probation + Compensation */}
-          <div className="grid md:grid-cols-2 gap-4">
-            <Panel title="🛡 สุขภาพการทดลองงาน" hint={`กำลังทดลองงาน ${R.inProb.length} คน`}>
-              <div className="grid grid-cols-2 gap-3 mb-3">
-                <div className="bg-slate-50 rounded-xl p-3"><div className="text-[11px] text-slate-500">คะแนนประเมินเฉลี่ย</div><div className="text-xl font-bold text-emerald-600">{R.avgProbScore ?? '—'} <span className="text-xs text-slate-400">/ 10</span></div></div>
-                <div className="bg-slate-50 rounded-xl p-3"><div className="text-[11px] text-slate-500">รอบประเมินที่บันทึกแล้ว</div><div className="text-xl font-bold text-slate-700">{R.probScores.length}</div></div>
-              </div>
-              <div className="text-[11px] font-semibold text-slate-600 mb-1">⏰ รอบประเมินที่ใกล้ถึง</div>
-              {R.upcomingEvals.length === 0 ? (
-                <div className="text-[11px] text-slate-400 italic">ไม่มีรอบประเมินใน 21 วันข้างหน้า</div>
-              ) : (
-                <ul className="space-y-1">
-                  {R.upcomingEvals.map((e,i) => (
-                    <li key={i} className="text-[11px] flex items-center justify-between gap-2">
-                      <span className="truncate">{e.round.replace('day','Day ')} · <b>{e.name}</b> ({e.position})</span>
-                      <span className={`whitespace-nowrap ${e.dueIn < 0 ? 'text-rose-600' : e.dueIn <= 7 ? 'text-amber-600' : 'text-slate-500'}`}>{e.dueIn < 0 ? `เลย ${Math.abs(e.dueIn)} วัน` : `อีก ${e.dueIn} วัน`} · {fmtDate(e.dueDate)}</span>
-                    </li>
+          {data.length === 0 ? (
+            <div className="text-center text-slate-400 text-xs py-16">ยังไม่มีข้อมูล</div>
+          ) : (
+            <>
+              <div className="flex">
+                <div className="relative w-9 shrink-0" style={{ height: H }}>
+                  {ticks.map(v => (
+                    <div key={v} className="absolute right-1 -translate-y-1/2 text-[9px] text-slate-400" style={{ top: (1 - v / niceMax) * H }}>{fmtTick(v)}</div>
                   ))}
-                </ul>
-              )}
-            </Panel>
-
-            <Panel title="💰 ค่าตอบแทน (จาก Offer ที่อนุมัติ)" hint={`${R.offers.length} ตำแหน่ง`}>
-              <div className="grid grid-cols-2 gap-3">
-                <div className="bg-slate-50 rounded-xl p-3"><div className="text-[11px] text-slate-500">เงินเดือนเริ่มต้นเฉลี่ย</div><div className="text-xl font-bold text-slate-800">{R.avgSalary != null ? fmtMoney(R.avgSalary) : '—'} <span className="text-xs text-slate-400">บาท</span></div></div>
-                <div className="bg-slate-50 rounded-xl p-3"><div className="text-[11px] text-slate-500">รวมรายได้เฉลี่ย / เดือน</div><div className="text-xl font-bold text-emerald-600">{R.avgIncome != null ? fmtMoney(R.avgIncome) : '—'} <span className="text-xs text-slate-400">บาท</span></div></div>
-              </div>
-              <div className="text-[11px] text-slate-400 mt-3">* ดึงจากเอกสาร Recruitment Approval (เงินเดือนใหม่ + ค่าตอบแทนรวม)</div>
-            </Panel>
-          </div>
-
-          {/* Recruiter workload */}
-          <Panel title="👤 ภาระงานทีม HR (Step ที่ทำเสร็จ)" hint="นับจาก completedBy ในทุกตำแหน่ง">
-            <div className="space-y-2">
-              {R.workloadList.map(w => (
-                <div key={w.name} className="flex items-center gap-2 text-xs">
-                  <div className="w-40 truncate text-slate-600">{w.name}</div>
-                  <Bar value={w.count} max={R.workloadMax} color="bg-amber-500" />
-                  <div className="w-8 text-right font-semibold text-slate-700">{w.count}</div>
                 </div>
-              ))}
-            </div>
-          </Panel>
-
-          {/* Data dictionary */}
-          <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 text-xs text-slate-600">
-            <div className="font-semibold text-slate-800 mb-2">📊 ข้อมูลที่ระบบดึงออกมาทำรายงานได้ (Data available for reporting)</div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1">
-              <div>• จำนวนตำแหน่งเปิด/ปิด/ยกเลิก แยกตามเดือน-แผนก-ประเภท</div>
-              <div>• Time-to-fill (เปิดอัตรา → อนุมัติ Offer) ต่อตำแหน่ง</div>
-              <div>• เวลาที่ใช้ในแต่ละ Step (จาก completedDate)</div>
-              <div>• Sourcing SLA: ปิดได้ใน 30 วันกี่ %</div>
-              <div>• เวลาที่ใช้อนุมัติเอกสาร (สร้าง → เซ็นครบ)</div>
-              <div>• Funnel: ตำแหน่งค้างอยู่ Step ไหนบ้าง</div>
-              <div>• คะแนน + กำหนดรอบประเมินทดลองงาน (Day 30/60/90/119)</div>
-              <div>• ค่าตอบแทน: เงินเดือน/รวมรายได้เฉลี่ย แยกตามระดับ (JG/UC)</div>
-              <div>• ภาระงานรายบุคคลของทีม HR</div>
-              <div>• Audit trail: ใครทำอะไรเมื่อไหร่ (created_by / updated_by / completedBy)</div>
-            </div>
-          </div>
+                <div className="relative flex-1" style={{ height: H }}>
+                  {ticks.map(v => (
+                    <div key={v} className="absolute left-0 right-0 border-t border-slate-100" style={{ top: (1 - v / niceMax) * H }} />
+                  ))}
+                  <div className="absolute inset-0 flex items-end gap-1.5">
+                    {shown.map(d => { const v = val(d); return (
+                      <div key={d.label} className="flex-1 flex flex-col justify-end min-w-0" title={`${d.label} · Full ${fmtVal(v.full)} · Part ${fmtVal(v.part)}`}>
+                        {v.part > 0 && <div className={`${cPart} rounded-t-sm`} style={{ height: (v.part / niceMax) * H }} />}
+                        <div className={`${cFull} ${v.part > 0 ? '' : 'rounded-t-sm'}`} style={{ height: (v.full / niceMax) * H }} />
+                      </div>
+                    ); })}
+                    {pad.map((_, i) => <div key={'p' + i} className="flex-1 min-w-0" />)}
+                  </div>
+                </div>
+              </div>
+              <div className="flex gap-1.5 mt-1 pl-9">
+                {shown.map(d => (
+                  <div key={d.label} className="flex-1 text-center text-[9px] text-slate-500 truncate min-w-0" title={d.label}>{d.label}</div>
+                ))}
+                {pad.map((_, i) => <div key={'lp' + i} className="flex-1 min-w-0" />)}
+              </div>
+              <div className="flex items-center justify-center gap-4 text-[10px] text-slate-500 mt-2">
+                <span className="flex items-center gap-1.5"><span className={`w-3 h-3 rounded-sm ${cFull} inline-block`}></span> Full time</span>
+                <span className="flex items-center gap-1.5"><span className={`w-3 h-3 rounded-sm ${cPart} inline-block`}></span> Part time</span>
+              </div>
+            </>
+          )}
         </div>
       );
     }
 
+    // Report / KPI — ดึงจาก Employee Database (active) · เพศจากคำนำหน้า · Full/Part จาก work_status
+    function ReportsView({ candidates = [] }) {
+      const [emps, setEmps] = useState(null);
+      const [ats, setAts] = useState([]);
+      const [atsPos, setAtsPos] = useState([]);
+      const [drill, setDrill] = useState(null);   // null | 'open' | 'waiting' — การ์ดที่กดดูรายละเอียด
+      useEffect(() => {
+        listEmployees().then(setEmps).catch(() => setEmps([]));
+        listAtsCandidates().then(setAts).catch(() => setAts([]));
+        listAtsPositions().then(setAtsPos).catch(() => setAtsPos([]));
+      }, []);
+      if (emps === null) return <div className="text-center text-slate-400 text-sm py-16">กำลังโหลดรายงาน…</div>;
+
+      const active = emps.filter(e => (e.status || 'active') === 'active');
+      const isHQ = (b) => /head\s*office|hq|สำนักงานใหญ่|ส่วนกลาง/i.test(b || '');   // ไม่ใช่ HQ = Branches
+      const isPart = (w) => /part/i.test(w || '');
+      const total = active.length;
+      const hq = active.filter(e => isHQ(e.branch)).length;
+      const br = total - hq;
+      const male = active.filter(empIsMale).length;
+      const female = active.filter(empIsFemale).length;
+
+      const salaryOf = (e) => Number(String(e.salary || '').replace(/[, ]/g, '')) || 0;
+      const groupBy = (listArr, key) => {
+        const m = new Map();
+        listArr.forEach(e => {
+          const k = ((e[key] || '').trim()) || '—';
+          if (!m.has(k)) m.set(k, { label: k, full: 0, part: 0, fullB: 0, partB: 0 });
+          const g = m.get(k);
+          const sal = salaryOf(e);
+          if (isPart(e.work_status)) { g.part++; g.partB += sal; } else { g.full++; g.fullB += sal; }
+        });
+        return [...m.values()].sort((a, b) => (b.full + b.part) - (a.full + a.part));
+      };
+      const byDept = groupBy(active.filter(e => isHQ(e.branch)), 'dept');     // กราฟแผนก = ฝ่าย HQ
+      const byBranch = groupBy(active.filter(e => !isHQ(e.branch)), 'branch'); // กราฟสาขา = สาขา (ไม่ใช่ HQ)
+
+      const Stat5 = ({ label, value, tone, onClick }) => (
+        <div onClick={onClick} className={`bg-white border border-slate-200 rounded-xl px-3 py-3 text-center ${onClick ? 'cursor-pointer hover:border-indigo-400 hover:shadow-sm transition' : ''}`}>
+          <div className="text-[11px] text-slate-500">{label}{onClick && <span className="text-indigo-400"> ▸</span>}</div>
+          <div className={`text-2xl font-bold ${tone}`}>{value}</div>
+        </div>
+      );
+
+      // ---------- งานสรรหา (candidates pipeline + Candidate Database/ATS) ----------
+      const TS = TOTAL_STEPS;
+      const openList = atsPos.slice();   // ตำแหน่งว่าง = ตำแหน่งใน Candidate Database
+      const openPositions = openList.length;
+      const atsCountByPos = (p) => ats.filter(a => a.position === p).length;
+      const filled = candidates.filter(c => c.current_step >= TS || c.status === 'passed');
+      const ttfArr = filled.map(c => {
+        const fill = c.probation?.startDate || (c.steps || []).reduce((d, s) => (s.completedDate && (!d || s.completedDate > d)) ? s.completedDate : d, null);
+        return fill ? daysBetween(c.process_start_date, fill) : null;
+      }).filter(v => v != null && v >= 0);
+      const ttf = ttfArr.length ? Math.round(ttfArr.reduce((a, b) => a + b, 0) / ttfArr.length) : 0;
+      const ym = today().slice(0, 7);
+      const atsMonth = ats.filter(a => (a.applied_date || a.created_at || '').slice(0, 7) === ym);
+      const appliedThisMonth = atsMonth.length;
+      const PASSED_STAGES = ['Passed', 'Offered', 'Hired'];
+      const passedIntvThisMonth = atsMonth.filter(a => PASSED_STAGES.includes(a.stage)).length;
+      const waitingList = candidates.filter(c => c.status === 'active' && c.current_step === 5);  // Step 5: Offer Approval & Extension
+      const waitingStart = waitingList.length;
+      const stageCount = (arr) => ats.filter(a => arr.includes(a.stage)).length;
+      const funnel = [
+        { label: 'ผู้สมัคร (Applied)', n: stageCount(['Applied/Sourced']), c: 'bg-slate-400' },
+        { label: 'คัดกรอง (Screen)', n: stageCount(['Pre-Screen', 'Hiring Manager Review']), c: 'bg-sky-400' },
+        { label: 'สัมภาษณ์ (Interview)', n: stageCount(['Onsite Interview', 'Online Interview']), c: 'bg-violet-400' },
+        { label: 'เสนอ Offer', n: stageCount(['Offered']), c: 'bg-pink-400' },
+        { label: 'รับเข้า (Hired)', n: stageCount(['Hired']), c: 'bg-emerald-500' },
+      ];
+      const funnelMax = Math.max(1, ...funnel.map(f => f.n));
+
+      // ---------- สุขภาพการทดลองงาน (candidates probation) ----------
+      const closing = (c) => { for (const rk of ['day30', 'day60', 'day90']) { const r = c.probationEvals?.[rk]; if (r?.hr_signed && (r.final_status === 'passed' || r.final_status === 'failed')) return r.final_status; } return null; };
+      const inProb = candidates.filter(c => c.current_step >= TS && c.status === 'active');
+      const probOverdue = inProb.filter(c => deriveStatus(c).tone === 'red').length;
+      const probEligible = inProb.filter(c => deriveStatus(c).label === 'พร้อมผ่านโปร').length;
+      const probPassed = candidates.filter(c => c.status === 'passed' || closing(c) === 'passed').length;
+      const probFailed = candidates.filter(c => closing(c) === 'failed').length;
+      const passRate = (probPassed + probFailed) ? Math.round(probPassed / (probPassed + probFailed) * 100) : 0;
+
+      return (
+        <div className="space-y-6">
+          {/* ===== 1) Workforce ===== */}
+          <div>
+            <h3 className="text-sm font-bold text-slate-800 mb-2">👥 ภาพรวมพนักงาน (Workforce)</h3>
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2.5">
+              <Stat5 label="Total Employees" value={total} tone="text-slate-900" />
+              <Stat5 label="Head Office" value={hq} tone="text-indigo-700" />
+              <Stat5 label="Branches" value={br} tone="text-sky-700" />
+              <Stat5 label="Male (ชาย)" value={male} tone="text-blue-700" />
+              <Stat5 label="Female (หญิง)" value={female} tone="text-pink-700" />
+            </div>
+            <div className="grid lg:grid-cols-2 gap-4 mt-3">
+              <StackedBarChart title="จำนวนพนักงานแต่ละแผนก" data={byDept} />
+              <StackedBarChart title="จำนวนพนักงานแต่ละสาขา" data={byBranch} />
+            </div>
+          </div>
+
+          {/* ===== 2) Recruitment ===== */}
+          <div className="pt-4 border-t border-slate-200">
+            <h3 className="text-sm font-bold text-slate-800 mb-2">🎯 งานสรรหา (Recruitment)</h3>
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2.5">
+              <Stat5 label="Open Positions" value={openPositions} tone="text-slate-900" onClick={() => setDrill('open')} />
+              <Stat5 label="Time-to-fill เฉลี่ย (วัน)" value={ttf} tone="text-amber-700" />
+              <Stat5 label="ผู้สมัครเดือนนี้" value={appliedThisMonth} tone="text-sky-700" />
+              <Stat5 label="ผ่านสัมภาษณ์ (เดือนนี้)" value={passedIntvThisMonth} tone="text-violet-700" />
+              <Stat5 label="รอเริ่มงาน" value={waitingStart} tone="text-emerald-700" onClick={() => setDrill('waiting')} />
+            </div>
+            <div className="bg-white border border-slate-200 rounded-2xl p-4 mt-3">
+              <div className="text-sm font-semibold text-slate-800 mb-3">Pipeline Funnel <span className="text-[11px] font-normal text-slate-400">· จาก Candidate Database</span></div>
+              <div className="space-y-1.5">
+                {funnel.map(f => (
+                  <div key={f.label} className="flex items-center gap-2">
+                    <div className="w-36 sm:w-44 shrink-0 text-[11px] text-slate-600 text-right truncate">{f.label}</div>
+                    <div className="flex-1 bg-slate-50 rounded">
+                      <div className={`${f.c} h-6 rounded flex items-center justify-end px-2 text-[11px] text-white font-medium`} style={{ width: Math.max(6, (f.n / funnelMax) * 100) + '%' }}>{f.n}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {/* ===== 3) Probation health ===== */}
+          <div className="pt-4 border-t border-slate-200">
+            <h3 className="text-sm font-bold text-slate-800 mb-2">🩺 สุขภาพการทดลองงาน (Probation Health)</h3>
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5">
+              <Stat5 label="กำลังทดลองงาน" value={inProb.length} tone="text-slate-900" />
+              <Stat5 label="พร้อมผ่านโปร" value={probEligible} tone="text-sky-700" />
+              <Stat5 label="เกินกำหนดประเมิน" value={probOverdue} tone="text-rose-700" />
+              <Stat5 label="ผ่านโปร" value={probPassed} tone="text-emerald-700" />
+              <Stat5 label="ไม่ผ่านโปร" value={probFailed} tone="text-rose-700" />
+              <Stat5 label="อัตราผ่าน" value={passRate + '%'} tone="text-emerald-700" />
+            </div>
+            {probOverdue > 0 && <div className="mt-2 text-[11px] text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2">⚠ มี {probOverdue} คนเกินกำหนดประเมินทดลองงาน — ควรรีบดำเนินการ (ดูแท็บ Pipeline)</div>}
+          </div>
+
+          <div className="text-center text-[11px] text-slate-400">Workforce ดึงจาก Employee Database · Recruitment จาก Pipeline + Candidate Database · Probation จากข้อมูลประเมินทดลองงาน · ทุกตัวเลขคำนวณสด</div>
+
+          {drill === 'open' && (
+            <Modal title="🪑 ตำแหน่งว่างตอนนี้" subtitle={`จาก Candidate Database · ${openPositions} ตำแหน่ง`} onClose={() => setDrill(null)}>
+              {openList.length === 0 ? <div className="text-center text-slate-400 text-sm py-6">ยังไม่มีตำแหน่งใน Candidate Database</div> : (
+                <div className="divide-y divide-slate-100 border border-slate-200 rounded-lg">
+                  {openList.map(p => {
+                    const n = atsCountByPos(p.name);
+                    const inProg = ats.filter(a => a.position === p.name && !['Hired', 'Not Passed'].includes(a.stage)).length;
+                    return (
+                      <div key={p.id || p.name} className="flex items-center justify-between gap-3 px-3 py-2 text-sm">
+                        <div className="font-medium text-slate-800 min-w-0 truncate">{p.name}</div>
+                        <div className="text-xs text-slate-500 shrink-0">{n} ผู้สมัคร · กำลังดำเนินการ {inProg}</div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+              <div className="text-[10px] text-slate-400 mt-2">ตำแหน่งว่าง = ตำแหน่งงานในคลังผู้สมัคร (Candidate Database) · จัดการได้ที่แท็บ 🗂 Candidate Database</div>
+            </Modal>
+          )}
+          {drill === 'waiting' && (
+            <Modal title="⏳ ผู้สมัครรอเริ่มงาน" subtitle="อยู่ที่ Step 5 · Offer Approval & Extension" onClose={() => setDrill(null)}>
+              {waitingList.length === 0 ? <div className="text-center text-slate-400 text-sm py-6">ยังไม่มีผู้สมัครรอเริ่มงาน (Step 5)</div> : (
+                <div className="divide-y divide-slate-100 border border-slate-200 rounded-lg">
+                  {waitingList.map(c => {
+                    const sd = c.probation?.startDate;
+                    const until = sd ? daysBetween(today(), sd) : null;
+                    return (
+                    <div key={c.id} className="flex items-center justify-between gap-3 px-3 py-2 text-sm">
+                      <div className="min-w-0">
+                        <div className="font-medium text-slate-800 truncate">{c.name || '(ยังไม่ระบุชื่อ)'}</div>
+                        <div className="text-[11px] text-slate-500 truncate">{c.position} · {c.department || '—'}</div>
+                      </div>
+                      <div className="text-right shrink-0">
+                        <div className="text-xs font-medium text-emerald-700">📅 เริ่มงาน {sd ? fmtDate(sd) : 'ยังไม่กำหนด'}</div>
+                        {sd != null && <div className="text-[10px] text-slate-400">{until > 0 ? `อีก ${until} วัน` : until === 0 ? 'วันนี้' : `เลยมา ${Math.abs(until)} วัน`}</div>}
+                      </div>
+                    </div>
+                    );
+                  })}
+                </div>
+              )}
+              <div className="text-[10px] text-slate-400 mt-2">รอเริ่มงาน = ผู้สมัครที่อยู่ Step 5 (Offer Approval &amp; Extension) ในแท็บ Pipeline</div>
+            </Modal>
+          )}
+        </div>
+      );
+    }
     // ===== User accounts — REAL Supabase Auth users via 'admin-users' Edge Function =====
     // admin สร้าง/รีเซ็ต/ลบ user จริงใน Supabase Auth → login ได้จริง
     // (service_role อยู่ฝั่ง server เท่านั้น · ไม่เก็บรหัสไว้ใน localStorage อีกต่อไป)
@@ -4311,7 +4363,7 @@ ${HR_EMAIL}`;
       const [revealed, setRevealed] = useState({});
       const [creating, setCreating] = useState(false);
       const [busy, setBusy] = useState(false);
-      const [nf, setNf] = useState({ email:'', name:'', dept:'', role:'user' });
+      const [nf, setNf] = useState({ email:'', name:'', dept:'', role:'user', level:2 });
       const withCode = accounts.filter(a => a.hasPassword).length;
       const filtered = accounts.filter(a => (a.email + ' ' + a.name + ' ' + (a.dept||'')).toLowerCase().includes(q.trim().toLowerCase()));
       const issue = async (email) => {
@@ -4336,10 +4388,11 @@ ${HR_EMAIL}`;
         const code = gen6();
         setBusy(true);
         try {
-          const res = await adminCreateUser({ email: em, password: code, name: nf.name.trim(), dept: nf.dept.trim(), role: nf.role });
-          setAccounts(list => [...list, { id: res?.id, email: em, name: nf.name.trim(), role: nf.role, dept: nf.dept.trim(), hasPassword: true }]);
+          const lvl = nf.role === 'admin' ? nf.level : 2;
+          const res = await adminCreateUser({ email: em, password: code, name: nf.name.trim(), dept: nf.dept.trim(), role: nf.role, level: lvl });
+          setAccounts(list => [...list, { id: res?.id, email: em, name: nf.name.trim(), role: nf.role, level: lvl, dept: nf.dept.trim(), hasPassword: true }]);
           setRevealed(r => ({ ...r, [em]: code }));
-          setNf({ email:'', name:'', dept:'', role:'user' });
+          setNf({ email:'', name:'', dept:'', role:'user', level:2 });
           setCreating(false);
           setQ(em);
           showToast('✓ สร้าง user ใน Supabase แล้ว · login ได้จริง', 'success');
@@ -4389,9 +4442,15 @@ ${HR_EMAIL}`;
                   <option value="user">User (ผู้ใช้งาน)</option>
                   <option value="admin">Admin (ผู้ดูแล)</option>
                 </select>
+                {nf.role === 'admin' && (
+                  <select className="input text-sm" value={nf.level} onChange={e => setNf(f => ({ ...f, level:Number(e.target.value) }))}>
+                    <option value={2}>Level 2 · แก้ไขได้ทุกอย่าง</option>
+                    <option value={1}>Level 1 · เข้าดูอย่างเดียว (read-only)</option>
+                  </select>
+                )}
               </div>
               <div className="flex justify-end gap-2">
-                <button onClick={() => { setCreating(false); setNf({ email:'', name:'', dept:'', role:'user' }); }} disabled={busy} className="px-3 py-1.5 text-sm text-slate-600 disabled:opacity-50">ยกเลิก</button>
+                <button onClick={() => { setCreating(false); setNf({ email:'', name:'', dept:'', role:'user', level:2 }); }} disabled={busy} className="px-3 py-1.5 text-sm text-slate-600 disabled:opacity-50">ยกเลิก</button>
                 <button onClick={createUser} disabled={busy} className="px-3 py-1.5 text-sm bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-lg">{busy ? 'กำลังสร้าง…' : 'สร้าง + ออกรหัส'}</button>
               </div>
             </div>
@@ -4403,7 +4462,7 @@ ${HR_EMAIL}`;
             {filtered.map(a => (
               <div key={a.email} className="flex items-center gap-2 px-2.5 py-2">
                 <div className="flex-1 min-w-0">
-                  <div className="text-xs font-medium text-slate-800 truncate">{a.name} <span className={`ml-1 text-[9px] px-1.5 py-0.5 rounded ${a.role==='admin'?'bg-amber-100 text-amber-700':'bg-slate-100 text-slate-500'}`}>{a.role==='admin'?'admin':'user'}</span> <span className="text-slate-400">· {a.dept || '—'}</span></div>
+                  <div className="text-xs font-medium text-slate-800 truncate">{a.name} <span className={`ml-1 text-[9px] px-1.5 py-0.5 rounded ${a.role==='admin'?'bg-amber-100 text-amber-700':'bg-slate-100 text-slate-500'}`}>{a.role==='admin'?'admin':'user'}</span>{a.role==='admin' && <span className={`ml-1 text-[9px] px-1.5 py-0.5 rounded ${(a.level||2)>=2?'bg-indigo-100 text-indigo-700':'bg-amber-100 text-amber-700'}`}>L{a.level||2}</span>} <span className="text-slate-400">· {a.dept || '—'}</span></div>
                   <div className="text-[10px] text-slate-500 truncate">{a.email}</div>
                   <div className="text-[10px]">
                     {revealed[a.email]
@@ -4428,7 +4487,7 @@ ${HR_EMAIL}`;
       const [showAddForm, setShowAddForm] = useState(false);
       const [showDirectProbation, setShowDirectProbation] = useState(false);
       const [filter, setFilter] = useState({ dept:'', step:'', type:'', q:'' });
-      const [tab, setTab] = useState('pipeline');
+      const [tab, setTab] = useState('reports');
       const [showUsers, setShowUsers] = useState(false);
       const [accounts, setAccounts] = useState([]);
       const [accountsLoading, setAccountsLoading] = useState(false);
@@ -4751,10 +4810,10 @@ ${HR_EMAIL}`;
           <header className="bg-white border-b border-slate-200 sticky top-0 z-30">
             <div className="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between gap-4">
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-slate-900 to-slate-700 grid place-items-center text-white text-lg">💼</div>
-                <div>
-                  <h1 className="text-base sm:text-lg font-semibold text-slate-900">Recruitment 120 Days</h1>
-                  <p className="text-xs text-slate-500">ระบบติดตามกระบวนการสรรหา · HR Internal</p>
+                <JianchaLogo size={40} />
+                <div className="pl-1 border-l border-slate-200">
+                  <h1 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight pl-2 leading-tight">JC People Core</h1>
+                  <p className="text-xs text-slate-500 pl-2">ระบบบริหารงานบุคคล · HR Internal</p>
                 </div>
               </div>
               <div className="flex items-center gap-2 text-xs text-slate-500">
@@ -4762,12 +4821,9 @@ ${HR_EMAIL}`;
                 <span className="hidden sm:inline-flex items-center gap-1 bg-emerald-50 text-emerald-700 px-2 py-1 rounded-lg border border-emerald-200">
                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span> {user.name}
                 </span>
-                <button onClick={() => setShowDirectProbation(true)} className="inline-flex items-center gap-1.5 bg-violet-600 hover:bg-violet-700 text-white text-sm font-medium px-3 py-2 rounded-lg ibtn" title="เพิ่มพนักงานเข้าประเมินทดลองงานโดยตรง (ไม่ผ่านสรรหา)">
-                  🛡 <span className="hidden sm:inline">เข้าประเมินทดลองงาน</span>
-                </button>
-                <button onClick={() => setShowAddForm(true)} className="inline-flex items-center gap-1.5 bg-slate-900 hover:bg-slate-800 text-white text-sm font-medium px-3 py-2 rounded-lg ibtn">
-                  <span className="text-base leading-none">+</span> New Requisition
-                </button>
+                <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-lg border ${canEdit() ? 'bg-indigo-50 text-indigo-700 border-indigo-200' : 'bg-amber-50 text-amber-700 border-amber-200'}`} title={canEdit() ? 'Admin Level 2 · แก้ไขได้ทุกอย่าง' : 'Admin Level 1 · เข้าดูได้อย่างเดียว'}>
+                  {canEdit() ? '🛡 Level 2' : '👁 Level 1 · อ่านอย่างเดียว'}
+                </span>
               </div>
             </div>
           </header>
@@ -4775,12 +4831,14 @@ ${HR_EMAIL}`;
           <main className="max-w-7xl mx-auto px-4 py-6 space-y-6">
             <div className="flex items-center gap-2 flex-wrap">
               <div className="flex items-center gap-2 text-sm flex-wrap">
+                <button onClick={() => setTab('reports')} className={`bg-white border rounded-xl px-4 py-1.5 font-medium ibtn ${tab==='reports' ? 'border-slate-300 shadow-sm text-slate-900' : 'border-slate-200 text-slate-500 hover:text-slate-700 hover:border-slate-300'}`}>📊 Reports / KPI</button>
                 <button onClick={() => setTab('pipeline')} className={`bg-white border rounded-xl px-4 py-1.5 font-medium ibtn ${tab==='pipeline' ? 'border-slate-300 shadow-sm text-slate-900' : 'border-slate-200 text-slate-500 hover:text-slate-700 hover:border-slate-300'}`}>📋 Pipeline</button>
+                <button onClick={() => setTab('employees')} className={`bg-white border rounded-xl px-4 py-1.5 font-medium ibtn ${tab==='employees' ? 'border-slate-300 shadow-sm text-slate-900' : 'border-slate-200 text-slate-500 hover:text-slate-700 hover:border-slate-300'}`}>👥 Employee Database</button>
+                <button onClick={() => setTab('candidates')} className={`bg-white border rounded-xl px-4 py-1.5 font-medium ibtn ${tab==='candidates' ? 'border-slate-300 shadow-sm text-slate-900' : 'border-slate-200 text-slate-500 hover:text-slate-700 hover:border-slate-300'}`}>🗂 Candidate Database</button>
                 <button onClick={() => setTab('branches')} className={`bg-white border rounded-xl px-4 py-1.5 font-medium ibtn ${tab==='branches' ? 'border-slate-300 shadow-sm text-slate-900' : 'border-slate-200 text-slate-500 hover:text-slate-700 hover:border-slate-300'}`}>🏬 Branches Manning</button>
                 <button onClick={() => setTab('hq')} className={`bg-white border rounded-xl px-4 py-1.5 font-medium ibtn ${tab==='hq' ? 'border-slate-300 shadow-sm text-slate-900' : 'border-slate-200 text-slate-500 hover:text-slate-700 hover:border-slate-300'}`}>🏢 HQ Manning</button>
-                <button onClick={() => setTab('reports')} className={`bg-white border rounded-xl px-4 py-1.5 font-medium ibtn ${tab==='reports' ? 'border-slate-300 shadow-sm text-slate-900' : 'border-slate-200 text-slate-500 hover:text-slate-700 hover:border-slate-300'}`}>📊 Reports / KPI</button>
                 <button onClick={() => setTab('history')} className={`bg-white border rounded-xl px-4 py-1.5 font-medium ibtn ${tab==='history' ? 'border-slate-300 shadow-sm text-slate-900' : 'border-slate-200 text-slate-500 hover:text-slate-700 hover:border-slate-300'}`}>🗂 ประวัติทดลองงาน</button>
-                <button onClick={() => setShowUsers(true)} className="bg-white border border-slate-200 hover:border-slate-300 rounded-xl px-4 py-1.5 font-medium text-slate-700 ibtn">👥 ผู้ใช้ & รหัสผ่าน</button>
+                {canEdit() && <button onClick={() => setShowUsers(true)} className="bg-white border border-slate-200 hover:border-slate-300 rounded-xl px-4 py-1.5 font-medium text-slate-700 ibtn">👥 ผู้ใช้ & รหัสผ่าน</button>}
               </div>
             </div>
 
@@ -4788,8 +4846,18 @@ ${HR_EMAIL}`;
             {tab === 'history' && <PassedProbationPanel candidates={candidates} />}
             {tab === 'branches' && <BranchesManning cfg={MANNING_CFG.branch} />}
             {tab === 'hq' && <BranchesManning cfg={MANNING_CFG.hq} />}
+            {tab === 'candidates' && <CandidateDatabaseView />}
+            {tab === 'employees' && <EmployeeDatabaseView />}
 
             {tab === 'pipeline' && (<>
+            {canEdit() && <div className="flex items-center justify-end gap-2 flex-wrap">
+              <button onClick={() => setShowDirectProbation(true)} className="inline-flex items-center gap-1.5 bg-violet-600 hover:bg-violet-700 text-white text-sm font-medium px-3 py-2 rounded-lg ibtn" title="เพิ่มพนักงานเข้าประเมินทดลองงานโดยตรง (ไม่ผ่านสรรหา)">
+                🛡 <span className="hidden sm:inline">เข้าประเมินทดลองงาน</span>
+              </button>
+              <button onClick={() => setShowAddForm(true)} className="inline-flex items-center gap-1.5 bg-slate-900 hover:bg-slate-800 text-white text-sm font-medium px-3 py-2 rounded-lg ibtn">
+                <span className="text-base leading-none">+</span> New Requisition
+              </button>
+            </div>}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
               <Stat label="ทั้งหมด" value={stats.total} tone="slate" icon="👥" />
               <Stat label="กำลังดำเนินการ" value={stats.active} tone="sky" icon="📋" />
@@ -5775,9 +5843,9 @@ ${HR_EMAIL}`;
         <div className="min-h-screen flex items-center justify-center p-6 bg-gradient-to-br from-slate-50 to-slate-100">
           <div className="bg-white rounded-2xl border border-slate-200 shadow-xl max-w-md w-full p-8">
             <div className="text-center mb-6">
-              <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-slate-900 to-slate-700 mx-auto mb-3 grid place-items-center text-white text-2xl">💼</div>
-              <h1 className="text-xl font-semibold text-slate-900">Recruitment 120 Days</h1>
-              <p className="text-xs text-slate-500 mt-1">เข้าสู่ระบบสำหรับทีม HR</p>
+              <div className="mx-auto mb-3 flex justify-center"><JianchaLogo size={56} /></div>
+              <h1 className="text-xl font-semibold text-slate-900">JC People Core</h1>
+              <p className="text-xs text-slate-500 mt-1">ระบบบริหารงานบุคคล · เข้าสู่ระบบสำหรับทีม HR</p>
             </div>
             <div className="space-y-3">
               <div>
@@ -5866,6 +5934,7 @@ ${HR_EMAIL}`;
         onDragEnd: () => { setDragKey(null); setOverKey(null); },
       });
       const c = branchCounts(b);
+      const urgent = c.vac >= 3;                           // Vacant ≥ 3 = ด่วน → กล่องแดง
       const full = c.total > 0 && c.filled === c.total;   // ทุกช่องมีคน (ไม่มี Hold/Vacant)
       const m = b.manning || {};
       const gapParts = [];
@@ -5884,18 +5953,18 @@ ${HR_EMAIL}`;
           <div key={key} className="mt-2">
             <div className="flex items-center justify-between">
               <div className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide">{title}{key === 'staff' ? ` (${arr.filter(s => s.status === 'filled' && s.name).length}/${arr.length})` : ''}</div>
-              <button type="button" onClick={() => onEditSlot(key, -1)} className="text-[10px] text-slate-400 hover:text-slate-700">+ ช่อง</button>
+              {canEdit() && <button type="button" onClick={() => onEditSlot(key, -1)} className="text-[10px] text-slate-400 hover:text-slate-700">+ ช่อง</button>}
             </div>
-            {arr.map((s, i) => <SlotRow key={i} s={s} i={i + 1} onClick={() => onEditSlot(key, i)} {...sp(key, i)} />)}
+            {arr.map((s, i) => <SlotRow key={i} s={s} i={i + 1} onClick={canEdit() ? (() => onEditSlot(key, i)) : undefined} {...(canEdit() ? sp(key, i) : {})} />)}
           </div>
         );
       };
       return (
-        <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
-          <div style={{ background: color }} className="text-white px-3 py-2">
+        <div className={`rounded-xl overflow-hidden ${urgent ? 'border-2 border-rose-500 ring-2 ring-rose-200 bg-rose-50' : 'bg-white border border-slate-200'}`}>
+          <div style={{ background: urgent ? '#e11d48' : color }} className="text-white px-3 py-2">
             <div className="flex items-center justify-between gap-2">
-              <span className="text-sm font-medium truncate">{b.name}</span>
-              <div className="flex items-center gap-1.5">{pill}<button type="button" onClick={onEdit} className="text-white/70 hover:text-white text-xs" title={`แก้ไข${cfg.word}`}>✎</button><button type="button" onClick={onRemove} className="text-white/70 hover:text-white text-xs" title={`ลบ${cfg.word}`}>✕</button></div>
+              <span className="text-sm font-medium truncate">{urgent ? '🚨 ' : ''}{b.name}</span>
+              <div className="flex items-center gap-1.5">{urgent && <span className="text-[10px] px-2 py-0.5 rounded-full bg-white text-rose-700 font-bold whitespace-nowrap">ด่วน</span>}{pill}{canEdit() && <button type="button" onClick={onEdit} className="text-white/70 hover:text-white text-xs" title={`แก้ไข${cfg.word}`}>✎</button>}{canEdit() && <button type="button" onClick={onRemove} className="text-white/70 hover:text-white text-xs" title={`ลบ${cfg.word}`}>✕</button>}</div>
             </div>
             <div className="text-[10px] opacity-85 mt-0.5">{b.brand} · Manning {c.filled}/{c.total} pax</div>
             <div className="h-1 bg-white/25 rounded-full mt-1.5"><div className="h-full bg-white rounded-full" style={{ width: pct + '%' }} /></div>
@@ -5903,8 +5972,8 @@ ${HR_EMAIL}`;
           <div className="px-2.5 py-2">
             {cfg.flat ? (
               <div>
-                {(m.staff || []).map((s, i) => <SlotRow key={i} s={s} i={i + 1} onClick={() => onEditSlot('staff', i)} {...sp('staff', i)} />)}
-                <button type="button" onClick={() => onEditSlot('staff', -1)} className="text-[11px] text-slate-400 hover:text-slate-700 mt-1.5">+ เพิ่มตำแหน่ง</button>
+                {(m.staff || []).map((s, i) => <SlotRow key={i} s={s} i={i + 1} onClick={canEdit() ? (() => onEditSlot('staff', i)) : undefined} {...(canEdit() ? sp('staff', i) : {})} />)}
+                {canEdit() && <button type="button" onClick={() => onEditSlot('staff', -1)} className="text-[11px] text-slate-400 hover:text-slate-700 mt-1.5">+ เพิ่มตำแหน่ง</button>}
               </div>
             ) : (
               cfg.roles.map(([key, label]) => role(label, key))
@@ -6054,7 +6123,11 @@ ${HR_EMAIL}`;
         .filter(b => brand === 'ทั้งหมด' || b.brand === brand)
         .filter(b => selectedIds.size === 0 || selectedIds.has(b.id))   // multi-select (empty = all)
         .filter(b => { if (!gapOnly) return true; const c = branchCounts(b); return c.hold > 0 || c.vac > 0; });
-      const tot = branches.reduce((a, b) => { const c = branchCounts(b); a.f += c.filled; a.t += c.total; a.h += c.hold; a.v += c.vac; return a; }, { f: 0, t: 0, h: 0, v: 0 });
+      // สรุปตัวเลขตาม "ที่กรองอยู่" (list) ไม่ใช่ทั้งหมด
+      const tot = list.reduce((a, b) => { const c = branchCounts(b); a.f += c.filled; a.t += c.total; a.h += c.hold; a.v += c.vac; return a; }, { f: 0, t: 0, h: 0, v: 0 });
+      // สาขาที่ Vacant ≥ 3 = ด่วน → เด้งขึ้นบนสุด (sort เสถียร · ที่เหลือคงลำดับเดิม)
+      const VACANT_URGENT = 3;
+      const ordered = [...list].sort((a, b) => (branchCounts(b).vac >= VACANT_URGENT ? 1 : 0) - (branchCounts(a).vac >= VACANT_URGENT ? 1 : 0));
 
       return (
         <div>
@@ -6062,14 +6135,14 @@ ${HR_EMAIL}`;
             <h2 className="text-base font-semibold text-slate-900">{cfg.icon} {cfg.title} <span className="text-xs font-normal text-slate-400">· กำลังคนราย{W}</span></h2>
             <div className="flex items-center gap-3">
               <label className="text-xs text-slate-600 flex items-center gap-1.5 cursor-pointer"><input type="checkbox" checked={gapOnly} onChange={e => setGapOnly(e.target.checked)} /> เฉพาะ{W}ที่ขาดคน</label>
-              <button onClick={() => setShowAdd(true)} className="text-sm bg-slate-900 hover:bg-slate-800 text-white px-3 py-1.5 rounded-lg ibtn">+ เพิ่ม{W}</button>
+              {canEdit() && <button onClick={() => setShowAdd(true)} className="text-sm bg-slate-900 hover:bg-slate-800 text-white px-3 py-1.5 rounded-lg ibtn">+ เพิ่ม{W}</button>}
             </div>
           </div>
 
           {err && <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 mb-3 text-xs text-amber-800">⚠️ ใช้งานข้อมูล{W}ไม่ได้: {err} · ตรวจว่ารัน <b>supabase/branches.sql</b> บน Supabase แล้ว</div>}
 
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-3">
-            {[[W, branches.length, 'text-slate-900'], ['กำลังคน', `${tot.f}/${tot.t}`, 'text-emerald-700'], ['Hold', tot.h, 'text-amber-700'], ['Vacant', tot.v, 'text-rose-700']].map(s => (
+            {[[W, list.length, 'text-slate-900'], ['กำลังคน', `${tot.f}/${tot.t}`, 'text-emerald-700'], ['Hold', tot.h, 'text-amber-700'], ['Vacant', tot.v, 'text-rose-700']].map(s => (
               <div key={s[0]} className="bg-slate-50 rounded-lg px-3 py-2"><div className="text-[11px] text-slate-500">{s[0]}</div><div className={`text-lg font-semibold ${s[2]}`}>{s[1]}</div></div>
             ))}
           </div>
@@ -6120,13 +6193,531 @@ ${HR_EMAIL}`;
             <div className="bg-white border border-dashed border-slate-300 rounded-xl p-10 text-center text-slate-500 text-sm">{branches.length === 0 ? `ยังไม่มี${W} · กด "+ เพิ่ม${W}"` : `ไม่มี${W}ตามตัวกรอง`}</div>
           ) : (
             <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(360px, 1fr))' }}>
-              {list.map(b => <BranchCard key={b.id} b={b} cfg={cfg} onEditSlot={(role, index) => setEdit({ branch: b, role, index })} onReorder={(role, from, to) => reorderSlot(b.id, role, from, to)} onEdit={() => setEditBranch(b)} onRemove={() => removeBranch(b)} />)}
+              {ordered.map(b => <BranchCard key={b.id} b={b} cfg={cfg} onEditSlot={(role, index) => setEdit({ branch: b, role, index })} onReorder={(role, from, to) => reorderSlot(b.id, role, from, to)} onEdit={() => setEditBranch(b)} onRemove={() => removeBranch(b)} />)}
             </div>
           )}
 
           {edit && <SlotEditorModal slot={edit.index >= 0 ? (edit.branch.manning?.[edit.role] || [])[edit.index] : null} flat={cfg.flat} onClose={() => setEdit(null)} onSave={saveSlot} onRemove={edit.index >= 0 ? removeSlot : null} />}
           {showAdd && <BranchFormModal cfg={cfg} onClose={() => setShowAdd(false)} onSave={addBranch} />}
           {editBranch && <BranchFormModal cfg={cfg} initial={{ brand: editBranch.brand, name: editBranch.name, target_pax: editBranch.target_pax }} onClose={() => setEditBranch(null)} onSave={saveBranchInfo} />}
+        </div>
+      );
+    }
+
+    // ===================== ATS · Candidate Database =====================
+    const ATS_STAGES = ['Applied/Sourced','Pre-Screen','Hiring Manager Review','Onsite Interview','Online Interview','Passed','Not Passed','Offered','Hired'];
+    const ATS_STAGE_COLOR = { 'Applied/Sourced':'#92400E','Pre-Screen':'#854F0B','Hiring Manager Review':'#C2570C','Onsite Interview':'#185FA5','Online Interview':'#6D28D9','Passed':'#0F6E56','Not Passed':'#A32D2D','Offered':'#BE185D','Hired':'#047857' };
+    const ATS_REASONS = ['Over age limit','Salary exceeds budget','Long commuting distance','Accepted another job offer'];
+    const ATS_THMON = ['ม.ค.','ก.พ.','มี.ค.','เม.ย.','พ.ค.','มิ.ย.','ก.ค.','ส.ค.','ก.ย.','ต.ค.','พ.ย.','ธ.ค.'];
+    function atsFmtDate(iso) { if (!iso) return '-'; const p = String(iso).slice(0,10).split('-'); if (p.length < 3) return iso; return parseInt(p[2],10)+' '+ATS_THMON[parseInt(p[1],10)-1]+' '+(parseInt(p[0],10)+543); }
+    function atsTodayISO() { return new Date().toISOString().slice(0,10); }
+    // Browser-side resume parsing (no external service). Name/phone/email only.
+    function atsExtract(t) {
+      const email = (t.match(/[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}/) || [])[0] || '';
+      let phone = (t.match(/0\d{1,2}[-\s.]?\d{3}[-\s.]?\d{3,4}/) || [])[0] || '';
+      if (phone) phone = phone.replace(/[\s.]/g,'-');
+      const lines = t.split(/\n/).map(s => s.trim()).filter(Boolean);
+      let name = '';
+      for (const L of lines) {
+        if (/@|โทร|มือถือ|tel|email|http|ตำแหน่ง|position|สมัคร|ประสบการณ์|ทักษะ|skill|exp|คาดหวัง|salary/i.test(L)) continue;
+        if ((L.match(/\d/g) || []).length > 2) continue;
+        if (L.length >= 3 && L.length <= 60) { name = L; break; }
+      }
+      return { name, phone, email };
+    }
+    // Lazy-load pdf.js from CDN only when a PDF is actually uploaded (keeps
+    // the bundle small; the PDF is parsed in-browser, nothing is uploaded to read it).
+    let _atsPdfPromise = null;
+    function atsLoadPdfJs() {
+      if (typeof window !== 'undefined' && window.pdfjsLib) return Promise.resolve(window.pdfjsLib);
+      if (_atsPdfPromise) return _atsPdfPromise;
+      _atsPdfPromise = new Promise((resolve, reject) => {
+        const s = document.createElement('script');
+        s.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
+        s.onload = () => { try { window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js'; } catch (_) {} resolve(window.pdfjsLib); };
+        s.onerror = () => { _atsPdfPromise = null; reject(new Error('โหลดตัวอ่าน PDF ไม่สำเร็จ (ตรวจอินเทอร์เน็ต) — ลองวางข้อความแทน')); };
+        document.head.appendChild(s);
+      });
+      return _atsPdfPromise;
+    }
+    async function atsReadPdf(file) {
+      const lib = await atsLoadPdfJs();
+      const buf = await file.arrayBuffer();
+      const pdf = await lib.getDocument({ data: buf }).promise;
+      let txt = '';
+      for (let p = 1; p <= pdf.numPages; p++) { const page = await pdf.getPage(p); const c = await page.getTextContent(); txt += c.items.map(it => it.str).join(' ') + '\n'; }
+      return txt;
+    }
+
+    function CandidateDatabaseView() {
+      const [positions, setPositions] = useState(null);   // null = loading
+      const [sources, setSources] = useState([]);
+      const [rows, setRows] = useState([]);
+      const [err, setErr] = useState('');
+      const [cur, setCur] = useState('');
+      const [view, setView] = useState('list');
+      const [form, setForm] = useState(null);
+      const [q, setQ] = useState('');
+      const [busy, setBusy] = useState(false);
+      const [fileInfo, setFileInfo] = useState('');
+
+      useEffect(() => {
+        Promise.all([listAtsPositions(), listAtsSources(), listAtsCandidates()])
+          .then(([ps, ss, cs]) => { setPositions(ps); setSources(ss); setRows(cs); setErr(''); setCur(c => c || (ps[0]?.name || '')); })
+          .catch(e => { setErr(e?.message || String(e)); setPositions([]); });
+      }, []);
+
+      const posNames = (positions || []).map(p => p.name);
+      const sourceNames = sources.map(s => s.name);
+      const curRows = rows.filter(r => r.position === cur).filter(r => {
+        const s = q.trim().toLowerCase();
+        return !s || [r.name, r.phone, r.email].some(v => (v || '').toLowerCase().includes(s));
+      });
+      const countFor = (name) => rows.filter(r => r.position === name).length;
+
+      const addPosition = async () => {
+        const n = prompt('ชื่อตำแหน่งใหม่ (เช่น Barista, Store Manager)');
+        if (!n || !n.trim()) return;
+        const name = n.trim();
+        if (posNames.includes(name)) { setCur(name); return; }
+        try { const row = await createAtsPosition({ name, sort_order: (positions?.length || 0) + 1 }); setPositions(p => [...p, row]); setCur(name); }
+        catch (e) { showToast('เพิ่มตำแหน่งไม่สำเร็จ: ' + (e?.message || ''), 'warning'); }
+      };
+      const setStage = (id, stage) => {
+        setRows(rs => rs.map(r => r.id === id ? { ...r, stage } : r));
+        updateAtsCandidate(id, { stage }).catch(e => showToast('บันทึกไม่สำเร็จ: ' + (e?.message || ''), 'warning'));
+      };
+      const setReason = (id, reason) => {
+        setRows(rs => rs.map(r => r.id === id ? { ...r, reason } : r));
+        updateAtsCandidate(id, { reason }).catch(e => showToast('บันทึกไม่สำเร็จ: ' + (e?.message || ''), 'warning'));
+      };
+      const openUpload = () => { setForm({ text: '', name: '', phone: '', email: '', salary: '', pos: cur, source: sourceNames[0] || '', parsed: false, file: null }); setFileInfo(''); setView('upload'); };
+      const parseText = () => { const r = atsExtract(form.text || ''); setForm(f => ({ ...f, name: r.name, phone: r.phone, email: r.email, parsed: true })); };
+      const onFile = async (file) => {
+        if (!file) return;
+        setFileInfo('⏳ กำลังอ่าน ' + file.name + '…');
+        try {
+          const text = /\.pdf$/i.test(file.name) ? await atsReadPdf(file) : await file.text();
+          const r = atsExtract(text);
+          setForm(f => ({ ...f, text, name: r.name, phone: r.phone, email: r.email, parsed: true, file }));
+          setFileInfo('📎 ' + file.name);
+        } catch (e) { setFileInfo(e?.message || 'อ่านไฟล์ไม่ได้ (อาจเป็นรูปสแกน) — ลองวางข้อความแทน'); }
+      };
+      const addSource = async () => {
+        const n = prompt('ชื่อช่องทางใหม่ (เช่น TikTok, Walk-in, เว็บบริษัท)');
+        if (!n || !n.trim()) return;
+        const name = n.trim();
+        if (sourceNames.includes(name)) { setForm(f => ({ ...f, source: name })); return; }
+        try { const row = await createAtsSource({ name, sort_order: (sources.length || 0) + 1 }); setSources(s => [...s, row]); setForm(f => ({ ...f, source: name })); }
+        catch (e) { showToast('เพิ่มช่องทางไม่สำเร็จ: ' + (e?.message || ''), 'warning'); }
+      };
+      const saveCandidate = async () => {
+        if (!form.pos) { showToast('เลือกตำแหน่งก่อนบันทึก', 'warning'); return; }
+        setBusy(true);
+        try {
+          let resume = null;
+          if (form.file) resume = await uploadResume(form.file);
+          const payload = { position: form.pos, name: (form.name || '').trim() || null, phone: form.phone || null, email: form.email || null, source: form.source || null, expected_salary: (form.salary || '').trim() || null, stage: 'Applied/Sourced', reason: null, applied_date: atsTodayISO(), resume };
+          const row = await createAtsCandidate(payload);
+          setRows(rs => [row, ...rs]);
+          setCur(form.pos); setView('list'); setForm(null);
+          showToast('บันทึกผู้สมัครเข้าคลังแล้ว', 'success');
+        } catch (e) { showToast('บันทึกไม่สำเร็จ: ' + (e?.message || ''), 'warning'); }
+        finally { setBusy(false); }
+      };
+      const openResume = async (r) => {
+        if (!r.resume?.path) return;
+        try { const url = await getSignedUrl(r.resume.path); window.open(url, '_blank', 'noopener'); }
+        catch (e) { showToast('เปิดไฟล์ไม่ได้: ' + (e?.message || ''), 'warning'); }
+      };
+      const removeCandidate = (r) => {
+        if (!confirm(`ลบผู้สมัคร "${r.name || '(ไม่ระบุชื่อ)'}" ?`)) return;
+        deleteAtsCandidate(r.id).then(() => setRows(rs => rs.filter(x => x.id !== r.id))).catch(e => showToast('ลบไม่สำเร็จ: ' + (e?.message || ''), 'warning'));
+      };
+      const attachResume = async (r, file) => {
+        if (!file) return;
+        try {
+          const resume = await uploadResume(file);
+          setRows(rs => rs.map(x => x.id === r.id ? { ...x, resume } : x));
+          await updateAtsCandidate(r.id, { resume });
+          showToast('แนบไฟล์ resume แล้ว', 'success');
+        } catch (e) { showToast('แนบไฟล์ไม่สำเร็จ: ' + (e?.message || ''), 'warning'); }
+      };
+
+      if (positions === null) return <div className="text-center text-slate-400 text-sm py-16">กำลังโหลด Candidate Database…</div>;
+
+      return (
+        <div>
+          <div className="flex items-center justify-between gap-2 flex-wrap mb-3">
+            <h2 className="text-base font-semibold text-slate-900">🗂 Candidate Database <span className="text-xs font-normal text-slate-400">· คลังผู้สมัครแยกตามตำแหน่ง · รวม {rows.length} คน</span></h2>
+            {canEdit() && <button onClick={openUpload} disabled={!posNames.length} className="text-sm bg-slate-900 hover:bg-slate-800 disabled:opacity-40 text-white px-3 py-1.5 rounded-lg ibtn">⬆️ อัปโหลด Resume</button>}
+          </div>
+
+          {err && <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 mb-3 text-xs text-amber-800">⚠️ ใช้งาน Candidate Database ไม่ได้: {err} · ตรวจว่ารัน <b>supabase/ats.sql</b> บน Supabase แล้ว</div>}
+
+          <div className="flex items-center gap-2 flex-wrap mb-3">
+            {posNames.map(p => (
+              <button key={p} onClick={() => { setCur(p); setView('list'); }} className={`text-xs px-3.5 py-1.5 rounded-xl border ibtn ${cur === p && view === 'list' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'}`}>{p} <span className="opacity-70">({countFor(p)})</span></button>
+            ))}
+            {canEdit() && <button onClick={addPosition} className="text-xs px-3 py-1.5 rounded-xl border border-dashed border-slate-300 text-slate-500 hover:border-slate-400 hover:text-slate-700 ibtn">＋ เพิ่มตำแหน่ง</button>}
+          </div>
+
+          {view === 'upload' ? (
+            <div className="bg-white border border-slate-200 rounded-xl p-4">
+              <div className="flex items-center justify-between gap-3 mb-3">
+                <div className="text-sm font-medium">📤 เพิ่มผู้สมัคร · อ่าน resume อัตโนมัติ</div>
+                <button onClick={() => { setView('list'); setForm(null); }} className="text-[11px] px-2.5 py-1 rounded-lg border border-slate-200 ibtn">← กลับคลัง</button>
+              </div>
+              <div className="grid sm:grid-cols-2 gap-3">
+                <div className="border border-dashed border-slate-300 rounded-lg p-3 text-center">
+                  <div className="text-xs text-slate-500 mb-2">เลือกไฟล์ resume (PDF/.txt)</div>
+                  <label className="inline-block text-xs bg-slate-900 text-white px-3 py-1.5 rounded-lg cursor-pointer">📎 เลือกไฟล์<input type="file" accept=".pdf,.txt" className="hidden" onChange={e => onFile(e.target.files[0])} /></label>
+                  <div className="text-[11px] text-slate-400 mt-2">{fileInfo || 'รองรับ PDF (พิมพ์มา) / .txt · รูปสแกนยังอ่านไม่ได้'}</div>
+                </div>
+                <div>
+                  <div className="text-[11px] text-slate-500 mb-1">หรือวางข้อความจาก resume:</div>
+                  <textarea value={form.text} onChange={e => setForm(f => ({ ...f, text: e.target.value }))} className="w-full text-[11px] leading-relaxed border border-slate-200 rounded-lg p-2" style={{ minHeight: 96 }} />
+                </div>
+              </div>
+              <button onClick={parseText} className="text-xs mt-3 bg-violet-600 hover:bg-violet-700 text-white px-3 py-1.5 rounded-lg ibtn">🔍 อ่านข้อมูล (regex)</button>
+              {form.parsed && (
+                <div className="border-t border-slate-100 mt-4 pt-3">
+                  <div className="grid sm:grid-cols-2 gap-3">
+                    {[['name','ชื่อ-สกุล'],['phone','เบอร์โทร'],['email','อีเมล']].map(([k,label]) => (
+                      <div key={k}>
+                        <div className="text-[11px] text-slate-500">{label} <span className="text-emerald-600">✓ auto</span></div>
+                        <input value={form[k]} onChange={e => setForm(f => ({ ...f, [k]: e.target.value }))} className="w-full text-xs border border-slate-200 rounded-lg px-2 py-1.5 mt-0.5" />
+                      </div>
+                    ))}
+                  </div>
+                  <div className="mt-2">
+                    <div className="text-[11px] text-slate-500">เงินเดือนคาดหวัง (บาท) <span className="text-slate-400">— กรอกเอง</span></div>
+                    <input value={form.salary} inputMode="numeric" placeholder="เช่น 18000" onChange={e => setForm(f => ({ ...f, salary: e.target.value }))} className="w-full sm:w-48 text-xs border border-slate-200 rounded-lg px-2 py-1.5 mt-0.5" />
+                  </div>
+                  <div className="flex items-center gap-3 mt-3 flex-wrap">
+                    <div className="flex items-center gap-2"><span className="text-[11px] text-slate-500">เข้าคลังตำแหน่ง:</span>
+                      <select value={form.pos} onChange={e => setForm(f => ({ ...f, pos: e.target.value }))} className="text-xs border border-slate-200 rounded-lg px-2 py-1">{posNames.map(p => <option key={p} value={p}>{p}</option>)}</select>
+                    </div>
+                    <div className="flex items-center gap-2"><span className="text-[11px] text-slate-500">ช่องทางที่มา:</span>
+                      <select value={form.source} onChange={e => { if (e.target.value === '__add__') addSource(); else setForm(f => ({ ...f, source: e.target.value })); }} className="text-xs border border-slate-200 rounded-lg px-2 py-1">
+                        {sourceNames.map(s => <option key={s} value={s}>{s}</option>)}
+                        <option value="__add__">＋ เพิ่มช่องทางใหม่…</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div className="flex justify-end gap-2 mt-3">
+                    <button onClick={() => { setView('list'); setForm(null); }} className="text-xs px-3 py-1.5 text-slate-600">ยกเลิก</button>
+                    <button onClick={saveCandidate} disabled={busy} className="text-xs bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white px-3 py-1.5 rounded-lg ibtn">{busy ? 'กำลังบันทึก…' : '✓ บันทึกเข้าคลัง'}</button>
+                  </div>
+                </div>
+              )}
+            </div>
+          ) : (
+            <>
+              <div className="bg-white rounded-xl border border-slate-200 p-2.5 mb-3 flex items-center gap-2">
+                <span className="text-slate-400 pl-1">🔍</span>
+                <input value={q} onChange={e => setQ(e.target.value)} placeholder="ค้นหา ชื่อ / เบอร์ / อีเมล…" className="flex-1 text-sm focus:outline-none" />
+              </div>
+              {!posNames.length ? (
+                <div className="text-center py-12 text-sm text-slate-400 bg-white border border-dashed border-slate-300 rounded-xl">ยังไม่มีตำแหน่ง · กด <b>＋ เพิ่มตำแหน่ง</b> เพื่อเริ่ม</div>
+              ) : curRows.length === 0 ? (
+                <div className="text-center py-12 text-sm text-slate-400 bg-white border border-dashed border-slate-300 rounded-xl">ยังไม่มีผู้สมัครในตำแหน่ง {cur} · กด "อัปโหลด Resume"</div>
+              ) : (
+                <div className="space-y-2.5">
+                  {curRows.map(c => (
+                    <div key={c.id} className="bg-white border border-slate-200 rounded-xl p-3.5">
+                      <div className="flex items-start justify-between gap-3 flex-wrap">
+                        <div className="min-w-0">
+                          <div className="text-sm font-medium">{c.name || '(ไม่ระบุชื่อ)'}{c.resume ? <span className="ml-1.5 text-[10px] bg-violet-100 text-violet-700 px-1.5 py-0.5 rounded-full">✨ จาก resume</span> : null}</div>
+                          <div className="text-[11px] text-slate-500 mt-0.5">📞 {c.phone || '-'} &nbsp; ✉️ {c.email || '-'}</div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <select value={c.stage} disabled={!canEdit()} onChange={e => setStage(c.id, e.target.value)} className="text-[11px] border border-slate-200 rounded-lg px-2 py-1 disabled:opacity-70" style={{ color: ATS_STAGE_COLOR[c.stage] || '#334155' }}>
+                            {ATS_STAGES.map(s => <option key={s} value={s}>{s}</option>)}
+                          </select>
+                          {canEdit() && <button onClick={() => removeCandidate(c)} title="ลบ" className="text-slate-300 hover:text-rose-500 text-sm">🗑</button>}
+                        </div>
+                      </div>
+                      <div className="flex items-center justify-between gap-3 mt-2 flex-wrap">
+                        <div className="text-[11px] text-slate-500"><span className="bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full">🏷️ {c.source || '-'}</span> &nbsp; 📅 {atsFmtDate(c.applied_date)}{c.expected_salary ? '   💰 ' + c.expected_salary + ' ฿' : ''}</div>
+                        {c.resume ? (
+                          <span className="flex items-center gap-2">
+                            <button onClick={() => openResume(c)} className="text-[11px] text-sky-600 hover:underline">📄 resume</button>
+                            {canEdit() && <label className="text-[11px] text-slate-400 hover:text-slate-700 cursor-pointer" title="เปลี่ยนไฟล์">⇆<input type="file" accept=".pdf,.txt,.doc,.docx,image/*" className="hidden" onChange={e => attachResume(c, e.target.files[0])} /></label>}
+                          </span>
+                        ) : (
+                          canEdit()
+                            ? <label className="text-[11px] text-sky-600 hover:underline cursor-pointer">📎 แนบไฟล์<input type="file" accept=".pdf,.txt,.doc,.docx,image/*" className="hidden" onChange={e => attachResume(c, e.target.files[0])} /></label>
+                            : <span className="text-[11px] text-slate-300">— ไม่มีไฟล์ —</span>
+                        )}
+                      </div>
+                      {c.stage === 'Not Passed' && (
+                        <div className="flex items-center gap-2 mt-2 pt-2 border-t border-rose-100">
+                          <span className="text-[11px] text-rose-600">เหตุผลตกรอบ:</span>
+                          <select value={c.reason || ''} disabled={!canEdit()} onChange={e => setReason(c.id, e.target.value)} className="text-[11px] border border-rose-200 rounded-lg px-2 py-1 text-rose-700 disabled:opacity-70">
+                            <option value="">— เลือก —</option>
+                            {ATS_REASONS.map(r => <option key={r} value={r}>{r}</option>)}
+                          </select>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      );
+    }
+
+    // ===================== Employee Database =====================
+    const EMP_DEPT_OPTIONS = ['Operations','Human Resources','Supply Chain Management','Marketing','Business Development','Information Technology','Finance','Learning & Development','Project Management','Legal','Inspector','Research & Development'];
+    const EMP_REASON_OPTIONS = ['รายได้รวมไม่เพียงพอ','สวัสดิการไม่ตอบโจทย์ (ค่าอาหาร/เดินทาง)','โครงสร้างการปรับขึ้นเงินเดือนไม่จูงใจ','ความเหนื่อยล้าสะสม (Burnout) จากปริมาณงาน','ชั่วโมงทำงานหรือการเข้ากะไม่ยืดหยุ่น','ลักษณะงานจริงไม่ตรงตามที่ตกลงไว้','ปัญหาความขัดแย้งกับเพื่อนร่วมงาน','สไตล์การบริหารของหัวหน้างาน/SM,AM','การสื่อสารหรือนโยบายจากส่วนกลางเปลี่ยนบ่อย','ได้งานใหม่','กลับไปดูแลครอบครัว','รักษาสุขภาพ','ไม่ผ่านการทดลองงาน','ไม่ต่อสัญญาจ้าง','ทำธุรกิจส่วนตัว','ติดต่อไม่ได้ เกิน 3 วัน','เลิกจ้าง'];
+    const EMP_DEPT_COLOR = { 'Operations':'bg-sky-100 text-sky-700','Supply Chain Management':'bg-amber-100 text-amber-700','Human Resources':'bg-violet-100 text-violet-700','Marketing':'bg-pink-100 text-pink-700','Business Development':'bg-emerald-100 text-emerald-700','Information Technology':'bg-indigo-100 text-indigo-700','Finance':'bg-teal-100 text-teal-700' };
+    const EMP_WORKTYPE_OPTIONS = ['Full time','Part time','Temp'];
+    const EMP_WORK_COLOR = { 'Full time':'bg-emerald-100 text-emerald-700','Part time':'bg-amber-100 text-amber-700','Temp':'bg-slate-200 text-slate-600' };
+    const EMP_PROBATION_ELIGIBLE = 119;
+    function empPad(n){ return String(n).padStart(2,'0'); }
+    function empFmt(d){ if(!d) return '-'; const x=new Date(d); if(isNaN(x)) return '-'; return empPad(x.getDate())+'/'+empPad(x.getMonth()+1)+'/'+x.getFullYear(); }
+    function empTodayISO(){ const d=new Date(); return d.getFullYear()+'-'+empPad(d.getMonth()+1)+'-'+empPad(d.getDate()); }
+    function empAddDays(iso,n){ const d=new Date(iso); if(isNaN(d)) return null; d.setDate(d.getDate()+n); return d; }
+    function empDiff(fromIso,to){ const a=new Date(fromIso), b=to||new Date(); if(isNaN(a)||isNaN(b)) return null; let y=b.getFullYear()-a.getFullYear(), m=b.getMonth()-a.getMonth(), dd=b.getDate()-a.getDate(); if(dd<0){ m--; dd+=new Date(b.getFullYear(), b.getMonth(), 0).getDate(); } if(m<0){ y--; m+=12; } return {y,m,d:dd}; }
+    function empYMD(x){ return x ? (x.y+' ปี '+x.m+' ด. '+x.d+' ว.') : '-'; }
+    function empMoney(s){ if(s==null||s==='') return '-'; const n=Number(String(s).replace(/[, ]/g,'')); if(isNaN(n)) return s; return n.toLocaleString('en-US')+' ฿'; }
+    // เดาคำนำหน้าจากชื่อ — นาย / นางสาว (รวม น.ส.) / นาง
+    function empGenderFromName(name){ const n=(name||'').trim();
+      if(/^(นางสาว|น\.ส\.?)/.test(n)) return 'นางสาว';
+      if(/^นาง/.test(n)) return 'นาง';
+      if(/^นาย(?!ก)/.test(n)) return 'นาย';
+      return ''; }
+    function empGender(rec){ return (rec && rec.gender) || empGenderFromName(rec && rec.name); }
+    // Male = นาย · Female = นางสาว/นาง
+    function empIsMale(rec){ return empGender(rec) === 'นาย'; }
+    function empIsFemale(rec){ const g = empGender(rec); return g === 'นางสาว' || g === 'นาง'; }
+
+    function EmployeeDatabaseView() {
+      const [rows, setRows] = useState(null);
+      const [err, setErr] = useState('');
+      const [view, setView] = useState('active');
+      const [q, setQ] = useState('');
+      const [fDept, setFDept] = useState('');
+      const [fBranch, setFBranch] = useState('');
+      const [fReason, setFReason] = useState('');
+      const [showSalary, setShowSalary] = useState(false);
+      const [edit, setEdit] = useState(null);       // { rec, isNew }
+      const [resignMode, setResignMode] = useState(false);
+      const [busy, setBusy] = useState(false);
+
+      useEffect(() => { listEmployees().then(r => { setRows(r); setErr(''); }).catch(e => { setErr(e?.message || String(e)); setRows([]); }); }, []);
+
+      if (rows === null) return <div className="text-center text-slate-400 text-sm py-16">กำลังโหลด Employee Database…</div>;
+
+      const statusOf = (r) => r.status || 'active';
+      const data = rows.filter(r => statusOf(r) === view);
+      const uniq = (arr) => [...new Set(arr.filter(Boolean))].sort();
+      const depts = uniq(rows.map(r => r.dept));
+      const branches = uniq(rows.map(r => r.branch));
+      const reasons = uniq(rows.filter(r => statusOf(r) === 'resign').map(r => r.reason));
+      const ql = q.trim().toLowerCase();
+      const filtered = data.filter(r => {
+        if (fDept && r.dept !== fDept) return false;
+        if (fBranch && r.branch !== fBranch) return false;
+        if (view === 'resign' && fReason && r.reason !== fReason) return false;
+        if (ql && ![r.name, r.name_en, r.nick, r.emp_id, r.position].some(v => (v || '').toLowerCase().includes(ql))) return false;
+        return true;
+      });
+
+      const deptBadge = (d) => <span className={`px-2 py-0.5 rounded-full ${EMP_DEPT_COLOR[d] || 'bg-slate-100 text-slate-600'}`}>{d || '-'}</span>;
+      const branchBadge = (b) => <span className="px-2 py-0.5 rounded-md bg-slate-100 text-slate-600">{b || '-'}</span>;
+      const salaryCell = (r) => showSalary
+        ? <span className="font-semibold text-emerald-700">{empMoney(r.salary)}</span>
+        : <span className="text-slate-300 tracking-widest select-none">••••••</span>;
+
+      const ACTIVE_COLS = [
+        { h:'No.', cell:(r,i)=>i+1, cls:'text-slate-400' },
+        { h:'Department', cell:r=>deptBadge(r.dept) },
+        { h:'Position', cell:r=>r.position, cls:'text-slate-700' },
+        { h:'Status', cell:r=> r.work_status ? <span className={`px-2 py-0.5 rounded-full ${EMP_WORK_COLOR[r.work_status]||'bg-slate-100 text-slate-600'}`}>{r.work_status}</span> : <span className="text-slate-300">-</span> },
+        { h:'Employee ID', cell:r=>r.emp_id, cls:'text-slate-500 font-mono' },
+        { h:'Branch', cell:r=>branchBadge(r.branch) },
+        { h:'ชื่อเล่น', cell:r=>r.nick, cls:'text-slate-500' },
+        { h:'ชื่อ-สกุล (TH)', cell:r=>r.name, cls:'font-semibold text-slate-800' },
+        { h:'Name (EN)', cell:r=>r.name_en, cls:'text-slate-500 italic' },
+        { h:'Join Date', cell:r=>empFmt(r.join_date), cls:'text-slate-600' },
+        { h:'รอบ 1 (D30)', cell:r=>empFmt(empAddDays(r.join_date,30)), tint:true },
+        { h:'รอบ 2 (D60)', cell:r=>empFmt(empAddDays(r.join_date,60)), tint:true },
+        { h:'รอบ 3 (D90)', cell:r=>empFmt(empAddDays(r.join_date,90)), tint:true },
+        { h:'ครบโปร (D119)', cell:r=>empFmt(empAddDays(r.join_date,EMP_PROBATION_ELIGIBLE)), tint:true, cls:'font-semibold text-amber-700' },
+        { h:'อายุงาน', cell:r=><span className="px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 font-medium">{empYMD(empDiff(r.join_date))}</span> },
+        { h:'Birth Date', cell:r=>empFmt(r.birth_date), cls:'text-slate-600' },
+        { h:'Age', cell:r=>empYMD(empDiff(r.birth_date)), cls:'text-slate-600' },
+        { h:'เงินเดือน', cell:salaryCell, money:true, cls:'text-right' },
+      ];
+      const RESIGN_COLS = [
+        { h:'No.', cell:(r,i)=>i+1, cls:'text-slate-400' },
+        { h:'Department', cell:r=>deptBadge(r.dept) },
+        { h:'Position', cell:r=>r.position, cls:'text-slate-700' },
+        { h:'Status', cell:r=> r.work_status ? <span className={`px-2 py-0.5 rounded-full ${EMP_WORK_COLOR[r.work_status]||'bg-slate-100 text-slate-600'}`}>{r.work_status}</span> : <span className="text-slate-300">-</span> },
+        { h:'Employee ID', cell:r=>r.emp_id, cls:'text-slate-500 font-mono' },
+        { h:'Branch', cell:r=>branchBadge(r.branch) },
+        { h:'ชื่อเล่น', cell:r=>r.nick, cls:'text-slate-500' },
+        { h:'ชื่อ-สกุล (TH)', cell:r=>r.name, cls:'font-semibold text-slate-800' },
+        { h:'Name (EN)', cell:r=>r.name_en, cls:'text-slate-500 italic' },
+        { h:'Join Date', cell:r=>empFmt(r.join_date), cls:'text-slate-600' },
+        { h:'Effective Date', cell:r=>empFmt(r.resign_date), cls:'font-semibold text-rose-600' },
+        { h:'อายุงานรวม', cell:r=>empYMD(empDiff(r.join_date, r.resign_date?new Date(r.resign_date):new Date())), cls:'text-slate-600' },
+        { h:'เหตุผลลาออก', cell:r=><span className="px-2 py-0.5 rounded-full bg-rose-100 text-rose-700">{r.reason || '-'}</span> },
+        { h:'รายละเอียด', cell:r=>r.detail || '-', cls:'text-slate-500' },
+        { h:'เงินเดือน', cell:salaryCell, money:true, cls:'text-right' },
+      ];
+      const cols = view==='active' ? ACTIVE_COLS : RESIGN_COLS;
+
+      const openEdit = (rec) => { setResignMode(false); setEdit({ rec: rec ? { ...rec } : { status:'active' }, isNew: !rec }); };
+      const setF = (k, v) => setEdit(e => ({ ...e, rec: { ...e.rec, [k]: v } }));
+      const closeEdit = () => { setEdit(null); setResignMode(false); };
+      const basePayload = (rec) => ({ dept:rec.dept||null, position:rec.position||null, work_status:rec.work_status||null, emp_id:rec.emp_id||null, branch:rec.branch||null, nick:rec.nick||null, name:rec.name||null, name_en:rec.name_en||null, gender:(rec.gender||empGenderFromName(rec.name))||null, join_date:rec.join_date||null, birth_date:rec.birth_date||null, salary:(rec.salary||'').trim()||null });
+      const saveEmp = async () => {
+        setBusy(true);
+        try {
+          const rec = edit.rec;
+          const payload = { status:'active', ...basePayload(rec) };
+          if (edit.isNew) { const row = await createEmployee(payload); setRows(rs => [...rs, row]); }
+          else { const row = await updateEmployee(rec.id, payload); setRows(rs => rs.map(x => x.id===rec.id ? row : x)); }
+          closeEdit(); showToast('บันทึกพนักงานแล้ว','success');
+        } catch (e) { showToast('บันทึกไม่สำเร็จ: '+(e?.message||''),'warning'); }
+        finally { setBusy(false); }
+      };
+      const startResign = () => { setResignMode(true); setEdit(e => ({ ...e, rec: { ...e.rec, resign_date: e.rec.resign_date || empTodayISO() } })); };
+      const confirmResign = async () => {
+        const rec = edit.rec;
+        if (!(rec.reason || '').trim()) { showToast('กรุณาเลือกเหตุผลการลาออก','warning'); return; }
+        setBusy(true);
+        try {
+          const patch = { status:'resign', resign_date:rec.resign_date||empTodayISO(), reason:rec.reason||null, detail:rec.detail||null, ...basePayload(rec) };
+          const row = await updateEmployee(rec.id, patch);
+          setRows(rs => rs.map(x => x.id===rec.id ? row : x));
+          closeEdit(); setView('resign'); showToast('บันทึกการลาออก → ย้ายไป Resign แล้ว','success');
+        } catch (e) { showToast('บันทึกไม่สำเร็จ: '+(e?.message||''),'warning'); }
+        finally { setBusy(false); }
+      };
+      const removeEmp = async () => {
+        if (!confirm(`ลบพนักงาน "${edit.rec.name || '(ไม่ระบุชื่อ)'}" ?`)) return;
+        try { await deleteEmployee(edit.rec.id); setRows(rs => rs.filter(x => x.id!==edit.rec.id)); closeEdit(); }
+        catch (e) { showToast('ลบไม่สำเร็จ: '+(e?.message||''),'warning'); }
+      };
+
+      const fld = (k, label, type) => (
+        <div key={k}><label className="text-[11px] text-slate-500">{label}</label>
+          <input type={type||'text'} value={edit.rec[k] || ''} onChange={e => setF(k, e.target.value)} className="w-full text-sm border border-slate-200 rounded-lg px-2 py-1.5 mt-0.5 focus:outline-none focus:ring-2 focus:ring-indigo-300" /></div>
+      );
+      const selAdd = (k, label, presets) => {
+        const opts = [...new Set([...presets, ...rows.map(r=>r[k]).filter(Boolean), edit.rec[k]].filter(Boolean))];
+        return (
+          <div key={k}><label className={`text-[11px] ${k==='reason'?'text-rose-600 font-medium':'text-slate-500'}`}>{label}</label>
+            <select value={edit.rec[k] || ''} onChange={e => { if (e.target.value==='__add__') { const v=prompt('พิมพ์'+label.replace(' *','')+'ใหม่'); if (v && v.trim()) setF(k, v.trim()); } else setF(k, e.target.value); }} className="w-full text-sm border border-slate-200 rounded-lg px-2 py-1.5 mt-0.5 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-300">
+              <option value="">— เลือก —</option>
+              {opts.map(o => <option key={o} value={o}>{o}</option>)}
+              <option value="__add__">＋ อื่นๆ (พิมพ์เอง)</option>
+            </select></div>
+        );
+      };
+
+      return (
+        <div>
+          <div className="flex items-center justify-between gap-2 flex-wrap mb-3">
+            <h2 className="text-base font-semibold text-slate-900">👥 Employee Database <span className="text-xs font-normal text-slate-400">· ทะเบียนพนักงาน · {rows.length} คน</span></h2>
+            {canEdit() && <button onClick={() => openEdit(null)} className="text-sm bg-slate-900 hover:bg-slate-800 text-white px-3 py-1.5 rounded-lg ibtn">＋ เพิ่มพนักงาน</button>}
+          </div>
+
+          {err && <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 mb-3 text-xs text-amber-800">⚠️ ใช้งาน Employee Database ไม่ได้: {err} · ตรวจว่ารัน <b>supabase/employees.sql</b> บน Supabase แล้ว</div>}
+
+          <div className="flex gap-2 mb-3">
+            <button onClick={() => setView('active')} className={`text-sm px-4 py-2 rounded-xl border font-medium ibtn ${view==='active' ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm' : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'}`}>👥 พนักงานปัจจุบัน ({rows.filter(r=>statusOf(r)==='active').length})</button>
+            <button onClick={() => setView('resign')} className={`text-sm px-4 py-2 rounded-xl border font-medium ibtn ${view==='resign' ? 'bg-rose-600 text-white border-rose-600 shadow-sm' : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'}`}>📤 ลาออก ({rows.filter(r=>statusOf(r)==='resign').length})</button>
+          </div>
+
+          <div className="bg-white rounded-xl border border-slate-200 p-2.5 mb-3 flex items-center gap-2 flex-wrap">
+            <div className="relative flex-1 min-w-[200px]"><span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">🔍</span>
+              <input value={q} onChange={e=>setQ(e.target.value)} placeholder="ค้นหา ชื่อ / EN / ชื่อเล่น / รหัส / ตำแหน่ง…" className="w-full text-sm border border-slate-200 rounded-lg pl-9 pr-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-300" /></div>
+            <select value={fDept} onChange={e=>setFDept(e.target.value)} className="text-sm border border-slate-200 rounded-lg px-3 py-2 bg-white"><option value="">ทุกแผนก</option>{depts.map(d=><option key={d} value={d}>{d}</option>)}</select>
+            <select value={fBranch} onChange={e=>setFBranch(e.target.value)} className="text-sm border border-slate-200 rounded-lg px-3 py-2 bg-white"><option value="">ทุกสาขา/สถานที่</option>{branches.map(b=><option key={b} value={b}>{b}</option>)}</select>
+            {view==='resign' && <select value={fReason} onChange={e=>setFReason(e.target.value)} className="text-sm border border-rose-200 text-rose-700 rounded-lg px-3 py-2 bg-white"><option value="">ทุกเหตุผลลาออก</option>{reasons.map(r=><option key={r} value={r}>{r}</option>)}</select>}
+            <button onClick={()=>setShowSalary(s=>!s)} className={`text-sm border rounded-lg px-3 py-2 font-medium whitespace-nowrap ${showSalary?'bg-emerald-600 text-white border-emerald-600':'bg-white text-slate-600 border-slate-200 hover:border-slate-300'}`}>{showSalary?'🙈 ซ่อนเงินเดือน':'👁 ดูเงินเดือน'}</button>
+          </div>
+
+          <div className="bg-white rounded-xl border border-slate-200 overflow-x-auto shadow-sm">
+            <table className="w-full text-xs">
+              <thead><tr>{cols.map((c,ci)=><th key={ci} className={`px-3 py-2.5 font-semibold text-white text-left whitespace-nowrap sticky top-0 ${c.money?'bg-emerald-700':(c.tint?'bg-amber-500':(view==='active'?'bg-indigo-600':'bg-rose-500'))}`}>{c.money?(showSalary?'👁 ':'🔒 '):''}{c.h}</th>)}</tr></thead>
+              <tbody>
+                {filtered.length===0 ? <tr><td colSpan={cols.length} className="text-center text-slate-400 py-10">ไม่พบข้อมูลตามตัวกรอง · กด "＋ เพิ่มพนักงาน"</td></tr>
+                : filtered.map((r,ri)=>(
+                  <tr key={r.id} onClick={canEdit()?(()=>openEdit(r)):undefined} className={`border-b border-slate-100 ${canEdit()?'cursor-pointer hover:bg-indigo-50':''} ${ri%2?'bg-slate-50':'bg-white'}`}>
+                    {cols.map((c,ci)=><td key={ci} className={`px-3 py-2 whitespace-nowrap ${c.cls||'text-slate-600'} ${c.tint?'bg-amber-50':''}`}>{c.cell(r,ri)}</td>)}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="text-[11px] text-slate-400 mt-2">กดที่แถวเพื่อแก้ไข · เลื่อนตารางแนวนอนเพื่อดูทุกคอลัมน์ → · อายุ/วันโปรเบชั่น (Day 30/60/90/119) คำนวณอัตโนมัติ</div>
+
+          {edit && (
+            <div className="fixed inset-0 bg-black/40 flex items-start justify-center p-4 overflow-y-auto z-50" onClick={e=>{ if(e.target===e.currentTarget) closeEdit(); }}>
+              <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl mt-8">
+                <div className="flex items-center justify-between px-5 py-3 border-b border-slate-100">
+                  <div className="font-semibold text-slate-800">{resignMode ? '📤 บันทึกการลาออก → ย้ายไป Resign' : (edit.isNew ? 'เพิ่มพนักงาน' : 'แก้ไขพนักงาน')}</div>
+                  <button onClick={closeEdit} className="w-7 h-7 grid place-items-center rounded-full text-slate-400 hover:bg-slate-100">✕</button>
+                </div>
+                <div className="grid sm:grid-cols-2 gap-3 px-5 py-4">
+                  {selAdd('dept','Department',EMP_DEPT_OPTIONS)}
+                  {fld('position','Position')}
+                  {selAdd('work_status','Status (ประเภทพนักงาน)',EMP_WORKTYPE_OPTIONS)}
+                  {fld('emp_id','Employee ID')}
+                  {fld('branch','Branch')}
+                  {fld('nick','ชื่อเล่น')}
+                  {fld('name','ชื่อ-สกุล (TH)')}
+                  {fld('name_en','Name (EN)')}
+                  <div key="gender"><label className="text-[11px] text-slate-500">คำนำหน้า <span className="text-slate-400">(เดาจากชื่อ · แก้ได้)</span></label>
+                    <select value={edit.rec.gender || empGenderFromName(edit.rec.name)} onChange={e=>setF('gender', e.target.value)} className="w-full text-sm border border-slate-200 rounded-lg px-2 py-1.5 mt-0.5 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-300">
+                      <option value="">— เลือก —</option>
+                      <option value="นาย">นาย</option>
+                      <option value="นางสาว">นางสาว</option>
+                      <option value="นาง">นาง</option>
+                    </select></div>
+                  {fld('join_date','Join Date','date')}
+                  {fld('birth_date','Birth Date','date')}
+                  {fld('salary','เงินเดือน (บาท)')}
+                  {resignMode && fld('resign_date','Effective Date','date')}
+                  {resignMode && selAdd('reason','เหตุผลลาออก *',EMP_REASON_OPTIONS)}
+                  {resignMode && fld('detail','รายละเอียด')}
+                  <div className="sm:col-span-2 bg-slate-50 border border-slate-200 rounded-lg p-3 text-xs text-slate-600">
+                    <div className="text-[11px] font-medium text-slate-500 mb-1.5">📐 คำนวณอัตโนมัติ · ตรงกับระบบโปรเบชั่น (Day 30/60/90 · ครบ Day 119)</div>
+                    {edit.rec.join_date ? (
+                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5">
+                        <div>รอบ 1 (D30): <b className="text-slate-800">{empFmt(empAddDays(edit.rec.join_date,30))}</b></div>
+                        <div>รอบ 2 (D60): <b className="text-slate-800">{empFmt(empAddDays(edit.rec.join_date,60))}</b></div>
+                        <div>รอบ 3 (D90): <b className="text-slate-800">{empFmt(empAddDays(edit.rec.join_date,90))}</b></div>
+                        <div>ครบโปร (D119): <b className="text-amber-700">{empFmt(empAddDays(edit.rec.join_date,EMP_PROBATION_ELIGIBLE))}</b></div>
+                        <div>อายุงาน: <b className="text-emerald-700">{empYMD(empDiff(edit.rec.join_date, resignMode&&edit.rec.resign_date?new Date(edit.rec.resign_date):new Date()))}</b></div>
+                        {edit.rec.birth_date && <div>อายุ: <b className="text-slate-800">{empYMD(empDiff(edit.rec.birth_date))}</b></div>}
+                      </div>
+                    ) : <div className="text-slate-400">กรอก Join Date เพื่อคำนวณวันโปรเบชั่น/อายุงาน</div>}
+                  </div>
+                </div>
+                <div className="flex items-center justify-between gap-2 px-5 py-3 border-t border-slate-100 flex-wrap">
+                  <div className="flex items-center gap-2">
+                    {!edit.isNew && !resignMode && view==='active' && <button onClick={startResign} className="text-xs text-rose-600 border border-rose-200 hover:bg-rose-50 px-3 py-1.5 rounded-lg font-medium">📤 ลาออก</button>}
+                    {!edit.isNew && <button onClick={removeEmp} className="text-xs text-slate-400 hover:text-rose-600 hover:bg-rose-50 px-3 py-1.5 rounded-lg">🗑 ลบ</button>}
+                  </div>
+                  <div className="flex gap-2">
+                    <button onClick={closeEdit} className="text-sm px-3 py-1.5 text-slate-600">ยกเลิก</button>
+                    {resignMode
+                      ? <button onClick={confirmResign} disabled={busy} className="text-sm bg-rose-600 hover:bg-rose-700 disabled:opacity-50 text-white px-4 py-1.5 rounded-lg ibtn">{busy?'กำลังบันทึก…':'✓ ยืนยันลาออก'}</button>
+                      : <button onClick={saveEmp} disabled={busy} className="text-sm bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white px-4 py-1.5 rounded-lg ibtn">{busy?'กำลังบันทึก…':'✓ บันทึก'}</button>}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       );
     }
@@ -6139,6 +6730,8 @@ ${HR_EMAIL}`;
       // ผู้ประเมิน) -> "งานของฉัน" (ApproverView).
       const isAdmin = !!session && roleFromSession(session) === 'admin';
       const viewRole = isAdmin ? 'hr' : 'approver';
+      const myLevel = session ? levelFromSession(session) : 2;
+      _canEdit = isAdmin && myLevel >= 2;   // Level 1 admin = read-only
 
       // --- Auth gate ---
       useEffect(() => {
@@ -6160,7 +6753,7 @@ ${HR_EMAIL}`;
       }, [session]);
 
       const user = session
-        ? { name: actorFromSession(session), role: roleFromSession(session) === 'admin' ? 'HR' : 'User', email: session.user?.email || '' }
+        ? { name: actorFromSession(session), role: roleFromSession(session) === 'admin' ? 'HR' : 'User', level: myLevel, email: session.user?.email || '' }
         : HR_USERS[1];
 
       async function handleSignOut() {
