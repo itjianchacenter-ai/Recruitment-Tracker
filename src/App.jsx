@@ -7,7 +7,7 @@ import {
   adminListUsers, adminCreateUser, adminResetPassword, adminDeleteUser, adminSetLevel,
   findUnregisteredEmails, getClientIp, uploadFile, getSignedUrl,
   listBranches, createBranch, updateBranch, deleteBranch,
-  listAtsPositions, createAtsPosition, listAtsSources, createAtsSource,
+  listAtsPositions, createAtsPosition, deleteAtsPosition, listAtsSources, createAtsSource,
   listAtsCandidates, createAtsCandidate, updateAtsCandidate, deleteAtsCandidate, uploadResume,
   listEmployees, createEmployee, updateEmployee, deleteEmployee
 } from './lib/supabase.js';
@@ -6295,6 +6295,17 @@ ${HR_EMAIL}`;
         try { const row = await createAtsPosition({ name, sort_order: (positions?.length || 0) + 1 }); setPositions(p => [...p, row]); setCur(name); }
         catch (e) { showToast('เพิ่มตำแหน่งไม่สำเร็จ: ' + (e?.message || ''), 'warning'); }
       };
+      const removePosition = async (name) => {
+        const p = (positions || []).find(x => x.name === name);
+        if (!p) return;
+        if (countFor(name) > 0) { showToast(`ตำแหน่ง "${name}" ยังมีผู้สมัคร ${countFor(name)} คน — ย้าย/ลบผู้สมัครออกก่อนจึงลบตำแหน่งได้`, 'warning'); return; }
+        if (!confirm(`ลบตำแหน่ง "${name}" ?`)) return;
+        try {
+          await deleteAtsPosition(p.id);
+          setPositions(ps => ps.filter(x => x.id !== p.id));
+          setCur(posNames.filter(x => x !== name)[0] || '');
+        } catch (e) { showToast('ลบตำแหน่งไม่สำเร็จ: ' + (e?.message || ''), 'warning'); }
+      };
       const setStage = (id, stage) => {
         setRows(rs => rs.map(r => r.id === id ? { ...r, stage } : r));
         updateAtsCandidate(id, { stage }).catch(e => showToast('บันทึกไม่สำเร็จ: ' + (e?.message || ''), 'warning'));
@@ -6372,6 +6383,7 @@ ${HR_EMAIL}`;
               <button key={p} onClick={() => { setCur(p); setView('list'); }} className={`text-xs px-3.5 py-1.5 rounded-xl border ibtn ${cur === p && view === 'list' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'}`}>{p} <span className="opacity-70">({countFor(p)})</span></button>
             ))}
             {canEdit() && <button onClick={addPosition} className="text-xs px-3 py-1.5 rounded-xl border border-dashed border-slate-300 text-slate-500 hover:border-slate-400 hover:text-slate-700 ibtn">＋ เพิ่มตำแหน่ง</button>}
+            {canEdit() && cur && <button onClick={() => removePosition(cur)} title={`ลบตำแหน่ง ${cur}`} className="text-xs px-3 py-1.5 rounded-xl border border-dashed border-rose-200 text-rose-500 hover:border-rose-400 hover:bg-rose-50 ibtn">🗑 ลบตำแหน่งนี้</button>}
           </div>
 
           {view === 'upload' ? (
