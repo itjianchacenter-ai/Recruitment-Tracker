@@ -6423,7 +6423,8 @@ ${HR_EMAIL}`;
                       <select value={form.pos} onChange={e => setForm(f => ({ ...f, pos: e.target.value }))} className="text-xs border border-slate-200 rounded-lg px-2 py-1">{posNames.map(p => <option key={p} value={p}>{p}</option>)}</select>
                     </div>
                     <div className="flex items-center gap-2"><span className="text-[11px] text-slate-500">ช่องทางที่มา:</span>
-                      <select value={form.source} onChange={e => { if (e.target.value === '__add__') addSource(); else setForm(f => ({ ...f, source: e.target.value })); }} className="text-xs border border-slate-200 rounded-lg px-2 py-1">
+                      <select value={form.source || ''} onChange={e => { if (e.target.value === '__add__') addSource(); else setForm(f => ({ ...f, source: e.target.value })); }} className="text-xs border border-slate-200 rounded-lg px-2 py-1">
+                        <option value="">— เลือกช่องทาง —</option>
                         {sourceNames.map(s => <option key={s} value={s}>{s}</option>)}
                         <option value="__add__">＋ เพิ่มช่องทางใหม่…</option>
                       </select>
