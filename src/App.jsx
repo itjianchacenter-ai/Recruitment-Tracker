@@ -4988,6 +4988,7 @@ ${HR_EMAIL}`;
                 <button onClick={() => setTab('reports')} className={`bg-white border rounded-xl px-4 py-1.5 font-medium ibtn ${tab==='reports' ? 'border-slate-300 shadow-sm text-slate-900' : 'border-slate-200 text-slate-500 hover:text-slate-700 hover:border-slate-300'}`}>📊 Reports / KPI</button>
                 <button onClick={() => setTab('pipeline')} className={`bg-white border rounded-xl px-4 py-1.5 font-medium ibtn ${tab==='pipeline' ? 'border-slate-300 shadow-sm text-slate-900' : 'border-slate-200 text-slate-500 hover:text-slate-700 hover:border-slate-300'}`}>📋 Pipeline</button>
                 <button onClick={() => setTab('employees')} className={`bg-white border rounded-xl px-4 py-1.5 font-medium ibtn ${tab==='employees' ? 'border-slate-300 shadow-sm text-slate-900' : 'border-slate-200 text-slate-500 hover:text-slate-700 hover:border-slate-300'}`}>👥 Employee Database</button>
+                <button onClick={() => setTab('foreigners')} className={`bg-white border rounded-xl px-4 py-1.5 font-medium ibtn ${tab==='foreigners' ? 'border-slate-300 shadow-sm text-slate-900' : 'border-slate-200 text-slate-500 hover:text-slate-700 hover:border-slate-300'}`}>🌏 Foreigners Database</button>
                 <button onClick={() => setTab('candidates')} className={`bg-white border rounded-xl px-4 py-1.5 font-medium ibtn ${tab==='candidates' ? 'border-slate-300 shadow-sm text-slate-900' : 'border-slate-200 text-slate-500 hover:text-slate-700 hover:border-slate-300'}`}>🗂 Candidate Database</button>
                 <button onClick={() => setTab('branches')} className={`bg-white border rounded-xl px-4 py-1.5 font-medium ibtn ${tab==='branches' ? 'border-slate-300 shadow-sm text-slate-900' : 'border-slate-200 text-slate-500 hover:text-slate-700 hover:border-slate-300'}`}>🏬 Branches Manning</button>
                 <button onClick={() => setTab('hq')} className={`bg-white border rounded-xl px-4 py-1.5 font-medium ibtn ${tab==='hq' ? 'border-slate-300 shadow-sm text-slate-900' : 'border-slate-200 text-slate-500 hover:text-slate-700 hover:border-slate-300'}`}>🏢 HQ Manning</button>
@@ -5001,7 +5002,8 @@ ${HR_EMAIL}`;
             {tab === 'branches' && <BranchesManning cfg={MANNING_CFG.branch} />}
             {tab === 'hq' && <BranchesManning cfg={MANNING_CFG.hq} />}
             {tab === 'candidates' && <CandidateDatabaseView />}
-            {tab === 'employees' && <EmployeeDatabaseView />}
+            {tab === 'employees' && <EmployeeDatabaseView kind="local" />}
+            {tab === 'foreigners' && <EmployeeDatabaseView kind="foreign" />}
 
             {tab === 'pipeline' && (<>
             {canEdit() && <div className="flex items-center justify-end gap-2 flex-wrap">
@@ -6704,7 +6706,8 @@ ${HR_EMAIL}`;
     function empIsMale(rec){ return empGender(rec) === 'นาย'; }
     function empIsFemale(rec){ const g = empGender(rec); return g === 'นางสาว' || g === 'นาง'; }
 
-    function EmployeeDatabaseView() {
+    function EmployeeDatabaseView({ kind = 'local' }) {
+      const isForeign = kind === 'foreign';
       const [rows, setRows] = useState(null);
       const [err, setErr] = useState('');
       const [view, setView] = useState('active');
@@ -6717,9 +6720,9 @@ ${HR_EMAIL}`;
       const [resignMode, setResignMode] = useState(false);
       const [busy, setBusy] = useState(false);
 
-      useEffect(() => { listEmployees().then(r => { setRows(r); setErr(''); }).catch(e => { setErr(e?.message || String(e)); setRows([]); }); }, []);
+      useEffect(() => { listEmployees().then(r => { setRows(r.filter(x => (x.kind || 'local') === kind)); setErr(''); }).catch(e => { setErr(e?.message || String(e)); setRows([]); }); }, []);
 
-      if (rows === null) return <div className="text-center text-slate-400 text-sm py-16">กำลังโหลด Employee Database…</div>;
+      if (rows === null) return <div className="text-center text-slate-400 text-sm py-16">กำลังโหลด{isForeign ? ' Foreigners Database' : ' Employee Database'}…</div>;
 
       const statusOf = (r) => r.status || 'active';
       const data = rows.filter(r => statusOf(r) === view);
@@ -6779,12 +6782,17 @@ ${HR_EMAIL}`;
         { h:'รายละเอียด', cell:r=>r.detail || '-', cls:'text-slate-500' },
         { h:'เงินเดือน', cell:salaryCell, money:true, cls:'text-right' },
       ];
-      const cols = view==='active' ? ACTIVE_COLS : RESIGN_COLS;
+      const foreignCols = isForeign ? [
+        { h:'เอกสาร', cell:r=> r.doc_status==='ครบ' ? <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 whitespace-nowrap">✓ ครบ</span> : r.doc_status==='ไม่ครบ' ? <span className="px-2 py-0.5 rounded-full bg-rose-100 text-rose-700 whitespace-nowrap">✗ ไม่ครบ</span> : <span className="text-slate-300">-</span> },
+        { h:'หมายเหตุ', cell:r=>r.remark || '-', cls:'text-slate-500 max-w-[200px] truncate' },
+      ] : [];
+      const baseCols = view==='active' ? ACTIVE_COLS : RESIGN_COLS;
+      const cols = isForeign ? [...baseCols.slice(0, 4), ...foreignCols, ...baseCols.slice(4)] : baseCols;
 
       const openEdit = (rec) => { setResignMode(false); setEdit({ rec: rec ? { ...rec } : { status:'active' }, isNew: !rec }); };
       const setF = (k, v) => setEdit(e => ({ ...e, rec: { ...e.rec, [k]: v } }));
       const closeEdit = () => { setEdit(null); setResignMode(false); };
-      const basePayload = (rec) => ({ dept:rec.dept||null, position:rec.position||null, work_status:rec.work_status||null, emp_id:rec.emp_id||null, branch:rec.branch||null, nick:rec.nick||null, name:rec.name||null, name_en:rec.name_en||null, gender:(rec.gender||empGenderFromName(rec.name))||null, join_date:rec.join_date||null, birth_date:rec.birth_date||null, salary:(rec.salary||'').trim()||null });
+      const basePayload = (rec) => ({ kind, dept:rec.dept||null, position:rec.position||null, work_status:rec.work_status||null, emp_id:rec.emp_id||null, branch:rec.branch||null, nick:rec.nick||null, name:rec.name||null, name_en:rec.name_en||null, gender:(rec.gender||empGenderFromName(rec.name))||null, join_date:rec.join_date||null, birth_date:rec.birth_date||null, salary:(rec.salary||'').trim()||null, doc_status:rec.doc_status||null, remark:rec.remark||null });
       const saveEmp = async () => {
         setBusy(true);
         try {
@@ -6817,14 +6825,16 @@ ${HR_EMAIL}`;
 
       const exportEmployees = () => {
         const isResign = view === 'resign';
+        const fx = isForeign ? ['สถานะเอกสาร','หมายเหตุ'] : [];
         const headers = isResign
-          ? ['No.','Department','Position','Status','Employee ID','Branch','คำนำหน้า','ชื่อเล่น','ชื่อ-สกุล (TH)','Name (EN)','Join Date','Effective Date','อายุงานรวม','เหตุผลลาออก','รายละเอียด','เงินเดือน']
-          : ['No.','Department','Position','Status','Employee ID','Branch','คำนำหน้า','ชื่อเล่น','ชื่อ-สกุล (TH)','Name (EN)','Join Date','รอบ1 (D30)','รอบ2 (D60)','รอบ3 (D90)','ครบโปร (D119)','อายุงาน','Birth Date','Age','เงินเดือน'];
+          ? ['No.','Department','Position','Status', ...fx, 'Employee ID','Branch','คำนำหน้า','ชื่อเล่น','ชื่อ-สกุล (TH)','Name (EN)','Join Date','Effective Date','อายุงานรวม','เหตุผลลาออก','รายละเอียด','เงินเดือน']
+          : ['No.','Department','Position','Status', ...fx, 'Employee ID','Branch','คำนำหน้า','ชื่อเล่น','ชื่อ-สกุล (TH)','Name (EN)','Join Date','รอบ1 (D30)','รอบ2 (D60)','รอบ3 (D90)','ครบโปร (D119)','อายุงาน','Birth Date','Age','เงินเดือน'];
+        const fxv = (r) => isForeign ? [r.doc_status || '', r.remark || ''] : [];
         const body = filtered.map((r, i) => isResign
-          ? [i+1, r.dept, r.position, r.work_status, r.emp_id, r.branch, empGender(r), r.nick, r.name, r.name_en, empFmt(r.join_date), empFmt(r.resign_date), empYMD(empDiff(r.join_date, r.resign_date ? new Date(r.resign_date) : new Date())), r.reason, r.detail, r.salary]
-          : [i+1, r.dept, r.position, r.work_status, r.emp_id, r.branch, empGender(r), r.nick, r.name, r.name_en, empFmt(r.join_date), empFmt(empAddDays(r.join_date,30)), empFmt(empAddDays(r.join_date,60)), empFmt(empAddDays(r.join_date,90)), empFmt(empAddDays(r.join_date,EMP_PROBATION_ELIGIBLE)), empYMD(empDiff(r.join_date)), empFmt(r.birth_date), empYMD(empDiff(r.birth_date)), r.salary]
+          ? [i+1, r.dept, r.position, r.work_status, ...fxv(r), r.emp_id, r.branch, empGender(r), r.nick, r.name, r.name_en, empFmt(r.join_date), empFmt(r.resign_date), empYMD(empDiff(r.join_date, r.resign_date ? new Date(r.resign_date) : new Date())), r.reason, r.detail, r.salary]
+          : [i+1, r.dept, r.position, r.work_status, ...fxv(r), r.emp_id, r.branch, empGender(r), r.nick, r.name, r.name_en, empFmt(r.join_date), empFmt(empAddDays(r.join_date,30)), empFmt(empAddDays(r.join_date,60)), empFmt(empAddDays(r.join_date,90)), empFmt(empAddDays(r.join_date,EMP_PROBATION_ELIGIBLE)), empYMD(empDiff(r.join_date)), empFmt(r.birth_date), empYMD(empDiff(r.birth_date)), r.salary]
         );
-        downloadCsv(`employee-${isResign ? 'resign' : 'active'}-${empTodayISO()}.csv`, [headers, ...body]);
+        downloadCsv(`${isForeign ? 'foreigners' : 'employee'}-${isResign ? 'resign' : 'active'}-${empTodayISO()}.csv`, [headers, ...body]);
         showToast(`Export ${body.length} แถวเป็น Excel (.csv) แล้ว`, 'success');
       };
       const fld = (k, label, type) => (
@@ -6846,7 +6856,7 @@ ${HR_EMAIL}`;
       return (
         <div>
           <div className="flex items-center justify-between gap-2 flex-wrap mb-3">
-            <h2 className="text-base font-semibold text-slate-900">👥 Employee Database <span className="text-xs font-normal text-slate-400">· ทะเบียนพนักงาน · {rows.length} คน</span></h2>
+            <h2 className="text-base font-semibold text-slate-900">{isForeign ? '🌏 Foreigners Database' : '👥 Employee Database'} <span className="text-xs font-normal text-slate-400">· {isForeign ? 'ทะเบียนพนักงานต่างด้าว' : 'ทะเบียนพนักงาน'} · {rows.length} คน</span></h2>
             <div className="flex items-center gap-2">
               <button onClick={exportEmployees} title="ดาวน์โหลดเป็น Excel (.csv) ตามที่กรองอยู่" className="text-sm bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-lg ibtn">⬇ Excel</button>
               {canEdit() && <button onClick={() => openEdit(null)} className="text-sm bg-slate-900 hover:bg-slate-800 text-white px-3 py-1.5 rounded-lg ibtn">＋ เพิ่มพนักงาน</button>}
@@ -6910,6 +6920,13 @@ ${HR_EMAIL}`;
                   {fld('join_date','Join Date','date')}
                   {fld('birth_date','Birth Date','date')}
                   {fld('salary','เงินเดือน (บาท)')}
+                  {isForeign && <div key="doc_status"><label className="text-[11px] text-slate-500">สถานะเอกสาร</label>
+                    <select value={edit.rec.doc_status || ''} onChange={e => setF('doc_status', e.target.value)} className="w-full text-sm border border-slate-200 rounded-lg px-2 py-1.5 mt-0.5 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-300">
+                      <option value="">— เลือก —</option>
+                      <option value="ครบ">✓ ครบ</option>
+                      <option value="ไม่ครบ">✗ ไม่ครบ</option>
+                    </select></div>}
+                  {isForeign && fld('remark','หมายเหตุ (ยังขาดอะไร / อื่นๆ)')}
                   {resignMode && fld('resign_date','Effective Date','date')}
                   {resignMode && selAdd('reason','เหตุผลลาออก *',EMP_REASON_OPTIONS)}
                   {resignMode && fld('detail','รายละเอียด')}

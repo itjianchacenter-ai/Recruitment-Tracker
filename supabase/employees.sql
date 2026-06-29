@@ -7,6 +7,9 @@
 create table if not exists public.emp_employees (
   id          uuid primary key default gen_random_uuid(),
   status      text not null default 'active',     -- 'active' | 'resign'
+  kind        text not null default 'local',       -- 'local' (พนักงานทั่วไป) | 'foreign' (ต่างด้าว)
+  doc_status  text,                                -- ครบ / ไม่ครบ (เฉพาะ foreign)
+  remark      text,                                -- หมายเหตุ/เอกสารที่ขาด (เฉพาะ foreign)
   dept        text,
   position    text,
   work_status text,                                -- ประเภทพนักงาน: Full time / Part time / Temp / (อื่นๆ)
@@ -31,6 +34,9 @@ create index if not exists emp_employees_status_idx on public.emp_employees (sta
 -- for tables created before these columns existed:
 alter table public.emp_employees add column if not exists work_status text;
 alter table public.emp_employees add column if not exists gender text;
+alter table public.emp_employees add column if not exists kind text not null default 'local';
+alter table public.emp_employees add column if not exists doc_status text;
+alter table public.emp_employees add column if not exists remark text;
 
 alter table public.emp_employees enable row level security;
 
