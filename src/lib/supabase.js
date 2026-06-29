@@ -230,6 +230,18 @@ export async function deleteEmployee(id) {
   if (error) throw error;
 }
 
+// ---------- Branch Sales (ยอดขายรายสาขา · สำหรับเทียบในหน้า Report) --------
+export async function listBranchSales() {
+  const { data, error } = await supabase.from('branch_sales').select('*');
+  if (error) throw error;
+  return data ?? [];
+}
+export async function upsertBranchSales(branch, sales) {
+  const { error } = await supabase.from('branch_sales')
+    .upsert({ branch, sales: Number(sales) || 0, updated_by: getActor(), updated_at: new Date().toISOString() }, { onConflict: 'branch' });
+  if (error) throw error;
+}
+
 // ---------- Storage (resume / signed docs / pre-boarding uploads) ----------
 // Bucket "recruitment" (private). Path convention: {candidateId}/step{n}/{filename}
 

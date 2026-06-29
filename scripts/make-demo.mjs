@@ -100,6 +100,11 @@ async function updateAtsCandidate(id, patch){ const i=_atsCandidates.findIndex(c
 async function deleteAtsCandidate(id){ const i=_atsCandidates.findIndex(c=>c.id===id); if(i>=0) _atsCandidates.splice(i,1); }
 async function uploadResume(file){ return { path:'ats/demo_'+(file&&file.name||'resume.pdf'), name:file&&file.name||'resume.pdf', size:file&&file.size||10000, uploadedAt:_nowIso(), uploadedBy:getActor() }; }
 
+/* ----- Branch Sales (mock) ----- */
+const _branchSales = { 'Central Lardprao': 850000, 'สาขา 1': 620000, 'สาขา 2': 540000, 'สาขา 3': 410000 };
+async function listBranchSales(){ return Object.entries(_branchSales).map(function(e){ return { branch:e[0], sales:e[1] }; }); }
+async function upsertBranchSales(branch, sales){ _branchSales[branch] = Number(sales)||0; return { ok:true }; }
+
 /* ----- Employee Database (mock) ----- */
 const _emps = [
   { id:'e1', status:'active', dept:'Operations',              position:'Shop Manager',        work_status:'Full time', emp_id:'680014',  branch:'Central Lardprao', nick:'(ตัวอย่าง)', name:'น.ส. ตัวอย่าง หนึ่ง', name_en:'Ms. Example One',   join_date:'2025-01-10', birth_date:'1996-05-20', salary:'28000', created_at:'2025-01-10T00:00:00Z' },

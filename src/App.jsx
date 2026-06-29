@@ -9,7 +9,8 @@ import {
   listBranches, createBranch, updateBranch, deleteBranch,
   listAtsPositions, createAtsPosition, deleteAtsPosition, listAtsSources, createAtsSource,
   listAtsCandidates, createAtsCandidate, updateAtsCandidate, deleteAtsCandidate, uploadResume,
-  listEmployees, createEmployee, updateEmployee, deleteEmployee
+  listEmployees, createEmployee, updateEmployee, deleteEmployee,
+  listBranchSales, upsertBranchSales
 } from './lib/supabase.js';
 
 // ---------------------------------------------------------------------------
@@ -4125,10 +4126,12 @@ ${HR_EMAIL}`;
       const [atsPos, setAtsPos] = useState([]);
       const [drill, setDrill] = useState(null);   // null | 'open' | 'waiting' — การ์ดที่กดดูรายละเอียด
       const [turnScope, setTurnScope] = useState('');   // '' = ทั้งองค์กร · 'hq:<ฝ่าย>' · 'br:<สาขา>'
+      const [salesMap, setSalesMap] = useState({});     // { branch: ยอดขาย }
       useEffect(() => {
         listEmployees().then(setEmps).catch(() => setEmps([]));
         listAtsCandidates().then(setAts).catch(() => setAts([]));
         listAtsPositions().then(setAtsPos).catch(() => setAtsPos([]));
+        listBranchSales().then(rows => setSalesMap(Object.fromEntries(rows.map(r => [r.branch, r.sales])))).catch(() => {});
       }, []);
       if (emps === null) return <div className="text-center text-slate-400 text-sm py-16">กำลังโหลดรายงาน…</div>;
 
@@ -4180,6 +4183,21 @@ ${HR_EMAIL}`;
       };
       const byDept = groupBy(active.filter(e => isHQ(e.branch)), 'dept');     // กราฟแผนก = ฝ่าย HQ
       const byBranch = groupBy(active.filter(e => !isHQ(e.branch)), 'branch'); // กราฟสาขา = สาขา (ไม่ใช่ HQ)
+
+      // เทียบยอดขายรายสาขา: พนักงาน + เงินเดือนรวม + ยอดขาย (เฉพาะสาขา ไม่รวม HQ)
+      const branchAgg = {};
+      active.filter(e => !isHQ(e.branch)).forEach(e => {
+        const b = (e.branch || '').trim() || '—';
+        if (!branchAgg[b]) branchAgg[b] = { branch: b, head: 0, salary: 0 };
+        branchAgg[b].head++; branchAgg[b].salary += salaryOf(e);
+      });
+      const branchSalesRows = Object.values(branchAgg).sort((a, b) => b.head - a.head);
+      const money0 = (n) => Number(n || 0).toLocaleString('en-US');
+      const saveSales = (branch, raw) => {
+        const n = Number(String(raw).replace(/[, ]/g, '')) || 0;
+        setSalesMap(m => ({ ...m, [branch]: n }));
+        upsertBranchSales(branch, n).catch(e => showToast('บันทึกยอดขายไม่สำเร็จ: ' + (e?.message || ''), 'warning'));
+      };
 
       const Stat5 = ({ label, value, tone, onClick }) => (
         <div onClick={onClick} className={`bg-white border border-slate-200 rounded-xl px-3 py-3 text-center ${onClick ? 'cursor-pointer hover:border-indigo-400 hover:shadow-sm transition' : ''}`}>
@@ -4265,6 +4283,51 @@ ${HR_EMAIL}`;
               <StackedBarChart title="จำนวนพนักงานแต่ละแผนก" data={byDept} />
               <StackedBarChart title="จำนวนพนักงานแต่ละสาขา" data={byBranch} />
             </div>
+          </div>
+
+          {/* ===== 1.4) Branch Sales vs Cost ===== */}
+          <div className="pt-4 border-t border-slate-200">
+            <h3 className="text-sm font-bold text-slate-800 mb-2">💰 ยอดขาย vs ต้นทุนพนักงาน (รายสาขา) <span className="text-xs font-normal text-slate-400">· เฉพาะสาขา · ใส่ยอดขายเพื่อเทียบ</span></h3>
+            {branchSalesRows.length === 0 ? (
+              <div className="text-center text-slate-400 text-xs py-6 bg-white border border-dashed border-slate-200 rounded-xl">ยังไม่มีพนักงานสาขา</div>
+            ) : (
+              <div className="bg-white border border-slate-200 rounded-2xl overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead className="bg-slate-50 text-slate-500 text-left">
+                    <tr>
+                      <th className="px-3 py-2 font-medium">สาขา</th>
+                      <th className="px-3 py-2 font-medium text-right">พนักงาน</th>
+                      <th className="px-3 py-2 font-medium text-right">เงินเดือนรวม/เดือน</th>
+                      <th className="px-3 py-2 font-medium text-right">ยอดขาย</th>
+                      <th className="px-3 py-2 font-medium text-right">ยอดขาย/หัว</th>
+                      <th className="px-3 py-2 font-medium text-right">%เงินเดือน/ยอดขาย</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {branchSalesRows.map(r => {
+                      const sales = Number(String(salesMap[r.branch] ?? '').replace(/[, ]/g, '')) || 0;
+                      const perHead = r.head ? Math.round(sales / r.head) : 0;
+                      const ratio = sales ? (r.salary / sales * 100) : null;
+                      return (
+                        <tr key={r.branch} className="hover:bg-slate-50">
+                          <td className="px-3 py-2 font-medium text-slate-800 whitespace-nowrap">{r.branch}</td>
+                          <td className="px-3 py-2 text-right text-slate-600">{r.head}</td>
+                          <td className="px-3 py-2 text-right text-slate-600 whitespace-nowrap">{money0(r.salary)} ฿</td>
+                          <td className="px-3 py-2 text-right">
+                            {canEdit()
+                              ? <input value={salesMap[r.branch] ?? ''} inputMode="numeric" placeholder="ใส่ยอดขาย" onChange={e => setSalesMap(m => ({ ...m, [r.branch]: e.target.value }))} onBlur={e => saveSales(r.branch, e.target.value)} className="w-28 text-right text-xs border border-slate-200 rounded-lg px-2 py-1 focus:outline-none focus:ring-2 focus:ring-emerald-300" />
+                              : <span className="text-slate-600">{sales ? money0(sales) + ' ฿' : '-'}</span>}
+                          </td>
+                          <td className="px-3 py-2 text-right text-emerald-700 font-medium whitespace-nowrap">{sales ? money0(perHead) + ' ฿' : '-'}</td>
+                          <td className="px-3 py-2 text-right">{ratio != null ? <span className={ratio > 30 ? 'text-rose-600 font-medium' : 'text-slate-600'}>{ratio.toFixed(1)}%</span> : '-'}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            <div className="text-[11px] text-slate-400 mt-1.5">พนักงาน/เงินเดือน ดึงจาก Employee Database (เฉพาะสาขา) · ยอดขายกรอกเอง บันทึกอัตโนมัติ · %เงินเดือน/ยอดขาย = ต้นทุนคนเทียบรายได้ (ยิ่งต่ำยิ่งดี)</div>
           </div>
 
           {/* ===== 1.5) Turnover ===== */}
