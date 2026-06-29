@@ -4124,6 +4124,7 @@ ${HR_EMAIL}`;
       const [ats, setAts] = useState([]);
       const [atsPos, setAtsPos] = useState([]);
       const [drill, setDrill] = useState(null);   // null | 'open' | 'waiting' — การ์ดที่กดดูรายละเอียด
+      const [turnScope, setTurnScope] = useState('');   // '' = ทั้งองค์กร · 'hq:<ฝ่าย>' · 'br:<สาขา>'
       useEffect(() => {
         listEmployees().then(setEmps).catch(() => setEmps([]));
         listAtsCandidates().then(setAts).catch(() => setAts([]));
@@ -4144,14 +4145,25 @@ ${HR_EMAIL}`;
       const resigned = emps.filter(e => e.status === 'resign');
       const curYm = today().slice(0, 7);
       const within = (d, days) => { if (!d) return false; const x = daysBetween(d, today()); return x >= 0 && x <= days; };
-      const resign12 = resigned.filter(e => within(e.resign_date, 365));
-      const resignMTD = resigned.filter(e => (e.resign_date || '').slice(0, 7) === curYm);
-      const turnover12 = (active.length + resign12.length) ? Math.round(resign12.length / (active.length + resign12.length) * 1000) / 10 : 0;
-      const tenures = resigned.map(e => { const d = empDiff(e.join_date, e.resign_date ? new Date(e.resign_date) : new Date()); return d ? d.y * 12 + d.m + d.d / 30 : null; }).filter(v => v != null);
+      // ตัวเลือก scope: รายฝ่าย (สำนักงานใหญ่) · รายสาขา
+      const hqDepts = [...new Set(emps.filter(e => isHQ(e.branch)).map(e => (e.dept || '').trim()).filter(Boolean))].sort();
+      const brNames = [...new Set(emps.filter(e => !isHQ(e.branch)).map(e => (e.branch || '').trim()).filter(Boolean))].sort();
+      const matchScope = (e) => {
+        if (!turnScope) return true;
+        if (turnScope.slice(0, 3) === 'hq:') return isHQ(e.branch) && (e.dept || '') === turnScope.slice(3);
+        if (turnScope.slice(0, 3) === 'br:') return !isHQ(e.branch) && (e.branch || '') === turnScope.slice(3);
+        return true;
+      };
+      const tActive = active.filter(matchScope);
+      const tResigned = resigned.filter(matchScope);
+      const resign12 = tResigned.filter(e => within(e.resign_date, 365));
+      const resignMTD = tResigned.filter(e => (e.resign_date || '').slice(0, 7) === curYm);
+      const turnover12 = (tActive.length + resign12.length) ? Math.round(resign12.length / (tActive.length + resign12.length) * 1000) / 10 : 0;
+      const tenures = tResigned.map(e => { const d = empDiff(e.join_date, e.resign_date ? new Date(e.resign_date) : new Date()); return d ? d.y * 12 + d.m + d.d / 30 : null; }).filter(v => v != null);
       const avgTenureM = tenures.length ? tenures.reduce((a, b) => a + b, 0) / tenures.length : 0;
       const avgTenureLabel = avgTenureM >= 12 ? `${Math.floor(avgTenureM / 12)} ปี ${Math.round(avgTenureM % 12)} ด.` : `${avgTenureM.toFixed(1)} เดือน`;
       const reasonCount = {};
-      resigned.forEach(e => { const r = (e.reason || '').trim(); if (r) reasonCount[r] = (reasonCount[r] || 0) + 1; });
+      tResigned.forEach(e => { const r = (e.reason || '').trim(); if (r) reasonCount[r] = (reasonCount[r] || 0) + 1; });
       const topReasons = Object.entries(reasonCount).sort((a, b) => b[1] - a[1]).slice(0, 3);
 
       const salaryOf = (e) => Number(String(e.salary || '').replace(/[, ]/g, '')) || 0;
@@ -4257,7 +4269,14 @@ ${HR_EMAIL}`;
 
           {/* ===== 1.5) Turnover ===== */}
           <div className="pt-4 border-t border-slate-200">
-            <h3 className="text-sm font-bold text-slate-800 mb-2">📉 อัตราการลาออก (Turnover)</h3>
+            <div className="flex items-center justify-between gap-2 flex-wrap mb-2">
+              <h3 className="text-sm font-bold text-slate-800">📉 อัตราการลาออก (Turnover) {turnScope && <span className="text-xs font-normal text-slate-400">· {turnScope.slice(3)}</span>}</h3>
+              <select value={turnScope} onChange={e => setTurnScope(e.target.value)} className="text-xs border border-slate-200 rounded-lg px-2 py-1 bg-white">
+                <option value="">ทั้งองค์กร</option>
+                {hqDepts.length > 0 && <optgroup label="สำนักงานใหญ่ (รายฝ่าย)">{hqDepts.map(d => <option key={'hq:' + d} value={'hq:' + d}>{d}</option>)}</optgroup>}
+                {brNames.length > 0 && <optgroup label="สาขา (รายสาขา)">{brNames.map(b => <option key={'br:' + b} value={'br:' + b}>{b}</option>)}</optgroup>}
+              </select>
+            </div>
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
               <Stat5 label="อัตราลาออก (12 ด.)" value={turnover12 + '%'} tone="text-rose-700" />
               <Stat5 label="ลาออก 12 เดือน" value={resign12.length} tone="text-rose-700" />
