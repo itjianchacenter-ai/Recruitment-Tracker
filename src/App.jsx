@@ -452,6 +452,17 @@ function toRow(c) {
     let _canEdit = true;
     function canEdit() { return _canEdit; }
 
+    // ---- Export CSV (เปิดใน Excel ได้เลย · UTF-8 BOM = ภาษาไทยถูกต้อง · ไม่ต้องใช้ไลบรารี) ----
+    function csvCell(v) { const s = v == null ? '' : String(v); return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; }
+    function downloadCsv(filename, rows) {
+      const csv = '﻿' + rows.map(r => r.map(csvCell).join(',')).join('\r\n');
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a'); a.href = url; a.download = filename;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1500);
+    }
+
     let toastSetter = null;
     function showToast(message, type='info') {
       if (toastSetter) toastSetter({ id: Date.now(), message, type });
@@ -4202,8 +4213,32 @@ ${HR_EMAIL}`;
       const probFailed = candidates.filter(c => closing(c) === 'failed').length;
       const passRate = (probPassed + probFailed) ? Math.round(probPassed / (probPassed + probFailed) * 100) : 0;
 
+      const exportReport = () => {
+        const R = [];
+        R.push(['รายงาน HR · JC People Core', today()]); R.push([]);
+        R.push(['== ภาพรวมพนักงาน (Workforce) ==']);
+        R.push(['Total Employees', total]); R.push(['Head Office', hq]); R.push(['Branches', br]); R.push(['Male (ชาย)', male]); R.push(['Female (หญิง)', female]); R.push([]);
+        R.push(['== อัตราการลาออก (Turnover) ==']);
+        R.push(['อัตราลาออก (12 ด.)', turnover12 + '%']); R.push(['ลาออก 12 เดือน', resign12.length]); R.push(['ลาออกเดือนนี้', resignMTD.length]); R.push(['อายุงานเฉลี่ยตอนลาออก', avgTenureLabel]);
+        topReasons.forEach(([r, n]) => R.push(['เหตุผล: ' + r, n])); R.push([]);
+        R.push(['== งานสรรหา (Recruitment) ==']);
+        R.push(['Open Positions', openPositions]); R.push(['Time-to-fill เฉลี่ย (วัน)', ttf]); R.push(['ผู้สมัครเดือนนี้', appliedThisMonth]); R.push(['ผ่านสัมภาษณ์ (เดือนนี้)', passedIntvThisMonth]); R.push(['รอเริ่มงาน', waitingStart]);
+        funnel.forEach(f => R.push(['Funnel: ' + f.label, f.n])); R.push([]);
+        R.push(['== สุขภาพการทดลองงาน (Probation) ==']);
+        R.push(['กำลังทดลองงาน', inProb.length]); R.push(['พร้อมผ่านโปร', probEligible]); R.push(['เกินกำหนดประเมิน', probOverdue]); R.push(['ผ่านโปร', probPassed]); R.push(['ไม่ผ่านโปร', probFailed]); R.push(['อัตราผ่าน', passRate + '%']); R.push([]);
+        R.push(['== พนักงานแต่ละแผนก (HQ) ==']); R.push(['แผนก', 'Full time', 'Part time', 'รวม', 'เงินเดือนรวม-Full', 'เงินเดือนรวม-Part']);
+        byDept.forEach(d => R.push([d.label, d.full, d.part, d.full + d.part, d.fullB, d.partB])); R.push([]);
+        R.push(['== พนักงานแต่ละสาขา ==']); R.push(['สาขา', 'Full time', 'Part time', 'รวม', 'เงินเดือนรวม-Full', 'เงินเดือนรวม-Part']);
+        byBranch.forEach(d => R.push([d.label, d.full, d.part, d.full + d.part, d.fullB, d.partB]));
+        downloadCsv(`hr-report-${today()}.csv`, R);
+        showToast('Export รายงานเป็น Excel (.csv) แล้ว', 'success');
+      };
+
       return (
         <div className="space-y-6">
+          <div className="flex justify-end">
+            <button onClick={exportReport} title="ดาวน์โหลดรายงานทั้งหมดเป็น Excel (.csv)" className="text-sm bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-lg ibtn">⬇ Export Excel</button>
+          </div>
           {/* ===== 1) Workforce ===== */}
           <div>
             <h3 className="text-sm font-bold text-slate-800 mb-2">👥 ภาพรวมพนักงาน (Workforce)</h3>
@@ -6665,6 +6700,18 @@ ${HR_EMAIL}`;
         catch (e) { showToast('ลบไม่สำเร็จ: '+(e?.message||''),'warning'); }
       };
 
+      const exportEmployees = () => {
+        const isResign = view === 'resign';
+        const headers = isResign
+          ? ['No.','Department','Position','Status','Employee ID','Branch','คำนำหน้า','ชื่อเล่น','ชื่อ-สกุล (TH)','Name (EN)','Join Date','Effective Date','อายุงานรวม','เหตุผลลาออก','รายละเอียด','เงินเดือน']
+          : ['No.','Department','Position','Status','Employee ID','Branch','คำนำหน้า','ชื่อเล่น','ชื่อ-สกุล (TH)','Name (EN)','Join Date','รอบ1 (D30)','รอบ2 (D60)','รอบ3 (D90)','ครบโปร (D119)','อายุงาน','Birth Date','Age','เงินเดือน'];
+        const body = filtered.map((r, i) => isResign
+          ? [i+1, r.dept, r.position, r.work_status, r.emp_id, r.branch, empGender(r), r.nick, r.name, r.name_en, empFmt(r.join_date), empFmt(r.resign_date), empYMD(empDiff(r.join_date, r.resign_date ? new Date(r.resign_date) : new Date())), r.reason, r.detail, r.salary]
+          : [i+1, r.dept, r.position, r.work_status, r.emp_id, r.branch, empGender(r), r.nick, r.name, r.name_en, empFmt(r.join_date), empFmt(empAddDays(r.join_date,30)), empFmt(empAddDays(r.join_date,60)), empFmt(empAddDays(r.join_date,90)), empFmt(empAddDays(r.join_date,EMP_PROBATION_ELIGIBLE)), empYMD(empDiff(r.join_date)), empFmt(r.birth_date), empYMD(empDiff(r.birth_date)), r.salary]
+        );
+        downloadCsv(`employee-${isResign ? 'resign' : 'active'}-${empTodayISO()}.csv`, [headers, ...body]);
+        showToast(`Export ${body.length} แถวเป็น Excel (.csv) แล้ว`, 'success');
+      };
       const fld = (k, label, type) => (
         <div key={k}><label className="text-[11px] text-slate-500">{label}</label>
           <input type={type||'text'} value={edit.rec[k] || ''} onChange={e => setF(k, e.target.value)} className="w-full text-sm border border-slate-200 rounded-lg px-2 py-1.5 mt-0.5 focus:outline-none focus:ring-2 focus:ring-indigo-300" /></div>
@@ -6685,7 +6732,10 @@ ${HR_EMAIL}`;
         <div>
           <div className="flex items-center justify-between gap-2 flex-wrap mb-3">
             <h2 className="text-base font-semibold text-slate-900">👥 Employee Database <span className="text-xs font-normal text-slate-400">· ทะเบียนพนักงาน · {rows.length} คน</span></h2>
-            {canEdit() && <button onClick={() => openEdit(null)} className="text-sm bg-slate-900 hover:bg-slate-800 text-white px-3 py-1.5 rounded-lg ibtn">＋ เพิ่มพนักงาน</button>}
+            <div className="flex items-center gap-2">
+              <button onClick={exportEmployees} title="ดาวน์โหลดเป็น Excel (.csv) ตามที่กรองอยู่" className="text-sm bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-lg ibtn">⬇ Excel</button>
+              {canEdit() && <button onClick={() => openEdit(null)} className="text-sm bg-slate-900 hover:bg-slate-800 text-white px-3 py-1.5 rounded-lg ibtn">＋ เพิ่มพนักงาน</button>}
+            </div>
           </div>
 
           {err && <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 mb-3 text-xs text-amber-800">⚠️ ใช้งาน Employee Database ไม่ได้: {err} · ตรวจว่ารัน <b>supabase/employees.sql</b> บน Supabase แล้ว</div>}
