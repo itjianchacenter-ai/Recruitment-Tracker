@@ -6314,7 +6314,7 @@ ${HR_EMAIL}`;
         setRows(rs => rs.map(r => r.id === id ? { ...r, reason } : r));
         updateAtsCandidate(id, { reason }).catch(e => showToast('บันทึกไม่สำเร็จ: ' + (e?.message || ''), 'warning'));
       };
-      const openUpload = () => { setForm({ text: '', name: '', phone: '', email: '', salary: '', pos: cur, source: sourceNames[0] || '', parsed: false, file: null }); setFileInfo(''); setView('upload'); };
+      const openUpload = () => { setForm({ text: '', name: '', phone: '', email: '', salary: '', pos: cur, source: '', parsed: false, file: null }); setFileInfo(''); setView('upload'); };
       const parseText = () => { const r = atsExtract(form.text || ''); setForm(f => ({ ...f, name: r.name, phone: r.phone, email: r.email, parsed: true })); };
       const onFile = async (file) => {
         if (!file) return;
@@ -6326,21 +6326,18 @@ ${HR_EMAIL}`;
           setFileInfo('📎 ' + file.name);
         } catch (e) { setFileInfo(e?.message || 'อ่านไฟล์ไม่ได้ (อาจเป็นรูปสแกน) — ลองวางข้อความแทน'); }
       };
-      const addSource = async () => {
-        const n = prompt('ชื่อช่องทางใหม่ (เช่น TikTok, Walk-in, เว็บบริษัท)');
-        if (!n || !n.trim()) return;
-        const name = n.trim();
-        if (sourceNames.includes(name)) { setForm(f => ({ ...f, source: name })); return; }
-        try { const row = await createAtsSource({ name, sort_order: (sources.length || 0) + 1 }); setSources(s => [...s, row]); setForm(f => ({ ...f, source: name })); }
-        catch (e) { showToast('เพิ่มช่องทางไม่สำเร็จ: ' + (e?.message || ''), 'warning'); }
-      };
       const saveCandidate = async () => {
         if (!form.pos) { showToast('เลือกตำแหน่งก่อนบันทึก', 'warning'); return; }
         setBusy(true);
         try {
           let resume = null;
           if (form.file) resume = await uploadResume(form.file);
-          const payload = { position: form.pos, name: (form.name || '').trim() || null, phone: form.phone || null, email: form.email || null, source: form.source || null, expected_salary: (form.salary || '').trim() || null, stage: 'Applied/Sourced', reason: null, applied_date: atsTodayISO(), resume };
+          const src = (form.source || '').trim();
+          // ถ้าพิมพ์ช่องทางใหม่ (ไม่มีในลิสต์) → บันทึกเก็บไว้ให้เลือกครั้งหน้า
+          if (src && !sourceNames.includes(src)) {
+            try { const row = await createAtsSource({ name: src, sort_order: (sources.length || 0) + 1 }); setSources(s => [...s, row]); } catch (_) { /* ไม่บล็อกการบันทึกผู้สมัคร */ }
+          }
+          const payload = { position: form.pos, name: (form.name || '').trim() || null, phone: form.phone || null, email: form.email || null, source: src || null, expected_salary: (form.salary || '').trim() || null, stage: 'Applied/Sourced', reason: null, applied_date: atsTodayISO(), resume };
           const row = await createAtsCandidate(payload);
           setRows(rs => [row, ...rs]);
           setCur(form.pos); setView('list'); setForm(null);
@@ -6423,11 +6420,8 @@ ${HR_EMAIL}`;
                       <select value={form.pos} onChange={e => setForm(f => ({ ...f, pos: e.target.value }))} className="text-xs border border-slate-200 rounded-lg px-2 py-1">{posNames.map(p => <option key={p} value={p}>{p}</option>)}</select>
                     </div>
                     <div className="flex items-center gap-2"><span className="text-[11px] text-slate-500">ช่องทางที่มา:</span>
-                      <select value={form.source || ''} onChange={e => { if (e.target.value === '__add__') addSource(); else setForm(f => ({ ...f, source: e.target.value })); }} className="text-xs border border-slate-200 rounded-lg px-2 py-1">
-                        <option value="">— เลือกช่องทาง —</option>
-                        {sourceNames.map(s => <option key={s} value={s}>{s}</option>)}
-                        <option value="__add__">＋ เพิ่มช่องทางใหม่…</option>
-                      </select>
+                      <input list="ats-source-list" value={form.source || ''} onChange={e => setForm(f => ({ ...f, source: e.target.value }))} placeholder="พิมพ์/เลือกช่องทาง" className="text-xs border border-slate-200 rounded-lg px-2 py-1 w-44" />
+                      <datalist id="ats-source-list">{sourceNames.map(s => <option key={s} value={s} />)}</datalist>
                     </div>
                   </div>
                   <div className="flex justify-end gap-2 mt-3">
