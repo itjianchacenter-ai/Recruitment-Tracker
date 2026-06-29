@@ -4129,6 +4129,20 @@ ${HR_EMAIL}`;
       const male = active.filter(empIsMale).length;
       const female = active.filter(empIsFemale).length;
 
+      // ---------- อัตราการลาออก (Turnover) — จาก Employee Database (ชีต Resign) ----------
+      const resigned = emps.filter(e => e.status === 'resign');
+      const curYm = today().slice(0, 7);
+      const within = (d, days) => { if (!d) return false; const x = daysBetween(d, today()); return x >= 0 && x <= days; };
+      const resign12 = resigned.filter(e => within(e.resign_date, 365));
+      const resignMTD = resigned.filter(e => (e.resign_date || '').slice(0, 7) === curYm);
+      const turnover12 = (active.length + resign12.length) ? Math.round(resign12.length / (active.length + resign12.length) * 1000) / 10 : 0;
+      const tenures = resigned.map(e => { const d = empDiff(e.join_date, e.resign_date ? new Date(e.resign_date) : new Date()); return d ? d.y * 12 + d.m + d.d / 30 : null; }).filter(v => v != null);
+      const avgTenureM = tenures.length ? tenures.reduce((a, b) => a + b, 0) / tenures.length : 0;
+      const avgTenureLabel = avgTenureM >= 12 ? `${Math.floor(avgTenureM / 12)} ปี ${Math.round(avgTenureM % 12)} ด.` : `${avgTenureM.toFixed(1)} เดือน`;
+      const reasonCount = {};
+      resigned.forEach(e => { const r = (e.reason || '').trim(); if (r) reasonCount[r] = (reasonCount[r] || 0) + 1; });
+      const topReasons = Object.entries(reasonCount).sort((a, b) => b[1] - a[1]).slice(0, 3);
+
       const salaryOf = (e) => Number(String(e.salary || '').replace(/[, ]/g, '')) || 0;
       const groupBy = (listArr, key) => {
         const m = new Map();
@@ -4204,6 +4218,24 @@ ${HR_EMAIL}`;
               <StackedBarChart title="จำนวนพนักงานแต่ละแผนก" data={byDept} />
               <StackedBarChart title="จำนวนพนักงานแต่ละสาขา" data={byBranch} />
             </div>
+          </div>
+
+          {/* ===== 1.5) Turnover ===== */}
+          <div className="pt-4 border-t border-slate-200">
+            <h3 className="text-sm font-bold text-slate-800 mb-2">📉 อัตราการลาออก (Turnover)</h3>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+              <Stat5 label="อัตราลาออก (12 ด.)" value={turnover12 + '%'} tone="text-rose-700" />
+              <Stat5 label="ลาออก 12 เดือน" value={resign12.length} tone="text-rose-700" />
+              <Stat5 label="ลาออกเดือนนี้" value={resignMTD.length} tone="text-amber-700" />
+              <Stat5 label="อายุงานเฉลี่ยตอนลาออก" value={avgTenureLabel} tone="text-slate-900" />
+            </div>
+            {topReasons.length > 0 && (
+              <div className="flex items-center gap-2 flex-wrap mt-2 text-[11px]">
+                <span className="text-slate-500">เหตุผลลาออกที่พบบ่อย:</span>
+                {topReasons.map(([r, n]) => <span key={r} className="px-2 py-0.5 rounded-full bg-rose-50 text-rose-700 border border-rose-100">{r} ({n})</span>)}
+              </div>
+            )}
+            <div className="text-[11px] text-slate-400 mt-1.5">อัตราลาออก = ลาออกใน 12 เดือน ÷ (พนักงานปัจจุบัน + ลาออก 12 เดือน) · ดึงจาก Employee Database</div>
           </div>
 
           {/* ===== 2) Recruitment ===== */}
