@@ -6422,6 +6422,7 @@ ${HR_EMAIL}`;
       const [q, setQ] = useState('');
       const [busy, setBusy] = useState(false);
       const [fileInfo, setFileInfo] = useState('');
+      const [editC, setEditC] = useState(null);   // ผู้สมัครที่กำลังแก้ไข (สำเนา)
 
       useEffect(() => {
         Promise.all([listAtsPositions(), listAtsSources(), listAtsCandidates()])
@@ -6503,6 +6504,18 @@ ${HR_EMAIL}`;
       const removeCandidate = (r) => {
         if (!confirm(`ลบผู้สมัคร "${r.name || '(ไม่ระบุชื่อ)'}" ?`)) return;
         deleteAtsCandidate(r.id).then(() => setRows(rs => rs.filter(x => x.id !== r.id))).catch(e => showToast('ลบไม่สำเร็จ: ' + (e?.message || ''), 'warning'));
+      };
+      const setEF = (k, v) => setEditC(e => ({ ...e, [k]: v }));
+      const saveEditC = async () => {
+        const c = editC;
+        const src = (c.source || '').trim();
+        if (src && !sourceNames.includes(src)) { try { const row = await createAtsSource({ name: src, sort_order: (sources.length || 0) + 1 }); setSources(s => [...s, row]); } catch (_) {} }
+        const patch = { name: (c.name || '').trim() || null, phone: c.phone || null, email: c.email || null, source: src || null, expected_salary: (c.expected_salary || '').toString().trim() || null, applied_date: c.applied_date || null };
+        try {
+          const row = await updateAtsCandidate(c.id, patch);
+          setRows(rs => rs.map(x => x.id === c.id ? row : x));
+          setEditC(null); showToast('บันทึกข้อมูลผู้สมัครแล้ว', 'success');
+        } catch (e) { showToast('บันทึกไม่สำเร็จ: ' + (e?.message || ''), 'warning'); }
       };
       const attachResume = async (r, file) => {
         if (!file) return;
@@ -6604,6 +6617,7 @@ ${HR_EMAIL}`;
                           <select value={c.stage} disabled={!canEdit()} onChange={e => setStage(c.id, e.target.value)} className="text-[11px] border border-slate-200 rounded-lg px-2 py-1 disabled:opacity-70" style={{ color: ATS_STAGE_COLOR[c.stage] || '#334155' }}>
                             {ATS_STAGES.map(s => <option key={s} value={s}>{s}</option>)}
                           </select>
+                          {canEdit() && <button onClick={() => setEditC({ ...c })} title="แก้ไขข้อมูล" className="text-slate-300 hover:text-indigo-600 text-sm">✎</button>}
                           {canEdit() && <button onClick={() => removeCandidate(c)} title="ลบ" className="text-slate-300 hover:text-rose-500 text-sm">🗑</button>}
                         </div>
                       </div>
@@ -6634,6 +6648,32 @@ ${HR_EMAIL}`;
                 </div>
               )}
             </>
+          )}
+
+          {editC && (
+            <div className="fixed inset-0 bg-black/40 flex items-start justify-center p-4 overflow-y-auto z-50" onClick={e => { if (e.target === e.currentTarget) setEditC(null); }}>
+              <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg mt-12">
+                <div className="flex items-center justify-between px-5 py-3 border-b border-slate-100">
+                  <div className="font-semibold text-slate-800">แก้ไขข้อมูลผู้สมัคร</div>
+                  <button onClick={() => setEditC(null)} className="w-7 h-7 grid place-items-center rounded-full text-slate-400 hover:bg-slate-100">✕</button>
+                </div>
+                <div className="grid sm:grid-cols-2 gap-3 px-5 py-4">
+                  <div className="sm:col-span-2"><label className="text-[11px] text-slate-500">ชื่อ-สกุล</label><input value={editC.name || ''} onChange={e => setEF('name', e.target.value)} className="w-full text-sm border border-slate-200 rounded-lg px-2 py-1.5 mt-0.5 focus:outline-none focus:ring-2 focus:ring-indigo-300" /></div>
+                  <div><label className="text-[11px] text-slate-500">เบอร์โทร</label><input value={editC.phone || ''} onChange={e => setEF('phone', e.target.value)} className="w-full text-sm border border-slate-200 rounded-lg px-2 py-1.5 mt-0.5 focus:outline-none focus:ring-2 focus:ring-indigo-300" /></div>
+                  <div><label className="text-[11px] text-slate-500">อีเมล</label><input value={editC.email || ''} onChange={e => setEF('email', e.target.value)} className="w-full text-sm border border-slate-200 rounded-lg px-2 py-1.5 mt-0.5 focus:outline-none focus:ring-2 focus:ring-indigo-300" /></div>
+                  <div><label className="text-[11px] text-slate-500">ช่องทางที่มา</label>
+                    <input list="ats-edit-source" value={editC.source || ''} onChange={e => setEF('source', e.target.value)} placeholder="พิมพ์/เลือกช่องทาง" className="w-full text-sm border border-slate-200 rounded-lg px-2 py-1.5 mt-0.5 focus:outline-none focus:ring-2 focus:ring-indigo-300" />
+                    <datalist id="ats-edit-source">{sourceNames.map(s => <option key={s} value={s} />)}</datalist>
+                  </div>
+                  <div><label className="text-[11px] text-slate-500">เงินเดือนคาดหวัง (บาท)</label><input value={editC.expected_salary || ''} inputMode="numeric" onChange={e => setEF('expected_salary', e.target.value)} className="w-full text-sm border border-slate-200 rounded-lg px-2 py-1.5 mt-0.5 focus:outline-none focus:ring-2 focus:ring-indigo-300" /></div>
+                  <div><label className="text-[11px] text-slate-500">วันที่สมัคร</label><input type="date" value={editC.applied_date || ''} onChange={e => setEF('applied_date', e.target.value)} className="w-full text-sm border border-slate-200 rounded-lg px-2 py-1.5 mt-0.5 focus:outline-none focus:ring-2 focus:ring-indigo-300" /></div>
+                </div>
+                <div className="flex justify-end gap-2 px-5 py-3 border-t border-slate-100">
+                  <button onClick={() => setEditC(null)} className="text-sm px-3 py-1.5 text-slate-600">ยกเลิก</button>
+                  <button onClick={saveEditC} className="text-sm bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-1.5 rounded-lg ibtn">✓ บันทึก</button>
+                </div>
+              </div>
+            </div>
           )}
         </div>
       );
