@@ -5912,8 +5912,8 @@ ${HR_EMAIL}`;
       const cls = s.status === 'hold' ? 'bg-amber-50 hover:bg-amber-100'
         : s.status === 'vacant' ? 'bg-rose-50 hover:bg-rose-100'
         : 'hover:bg-slate-50';
-      const body = s.status === 'hold' ? <span className="text-[11px] text-amber-700">🟡 Hold</span>
-        : s.status === 'vacant' ? <span className="text-[11px] text-rose-700">🔴 Vacant</span>
+      const body = s.status === 'hold' ? <span className="text-[11px] text-amber-700">🟡 Hold{s.title ? <span className="text-amber-600/80"> · {s.title}</span> : ''}</span>
+        : s.status === 'vacant' ? <span className="text-[11px] text-rose-700">🔴 Vacant{s.title ? <span className="text-rose-600/80"> · {s.title}</span> : ''}</span>
         : <span className="text-[11px] text-slate-800 min-w-0">{s.name}{s.nick ? <span className="text-slate-400"> ({s.nick})</span> : ''}
             {s.title ? <span className="text-slate-500"> · {s.title}</span> : ''}
             {s.badge ? <span className="ml-1 text-[9px] px-1.5 py-0.5 rounded-full bg-violet-100 text-violet-700">{s.badge}</span> : ''}
@@ -6001,7 +6001,12 @@ ${HR_EMAIL}`;
       const [customBadge, setCustomBadge] = useState(!!(s.badge && !PRESET_BADGES.includes(s.badge)));
       const submit = () => {
         if (s.status === 'filled' && !(s.name || '').trim()) { showToast('กรอกชื่อพนักงาน หรือเลือกสถานะ Hold/Vacant', 'warning'); return; }
-        onSave(s.status === 'filled' ? { ...s, name: s.name.trim() } : { status: s.status });
+        if (s.status === 'filled') { onSave({ ...s, name: s.name.trim() }); return; }
+        // Hold/Vacant: เก็บ status + ชื่อตำแหน่ง (ถ้าระบุ) จะได้รู้ว่าช่องว่าง/hold เป็นตำแหน่งอะไร
+        const out = { status: s.status };
+        const t = (s.title || '').trim();
+        if (t) out.title = t;
+        onSave(out);
       };
       return (
         <Modal title="ช่องพนักงาน" subtitle="ตั้งสถานะ + ข้อมูล" onClose={onClose}>
@@ -6011,6 +6016,9 @@ ${HR_EMAIL}`;
                 <button key={o[0]} type="button" onClick={() => set('status', o[0])} className={`flex-1 text-xs py-2 rounded-lg border ibtn ${s.status === o[0] ? 'border-slate-900 bg-slate-900 text-white' : 'border-slate-200 text-slate-600 hover:border-slate-300'}`}>{o[1]}</button>
               ))}
             </div>
+            {(s.status === 'hold' || s.status === 'vacant') && (
+              <Field label="ตำแหน่ง (ระบุได้ว่าช่องนี้คือตำแหน่งอะไร)"><input className="input" value={s.title || ''} onChange={e => set('title', e.target.value)} placeholder="เช่น Barista · ผู้จัดการสาขา · เจ้าหน้าที่บัญชี" autoFocus /></Field>
+            )}
             {s.status === 'filled' && (
               <>
                 <Field label="ชื่อ-นามสกุล" required><input className="input" value={s.name} onChange={e => set('name', e.target.value)} autoFocus /></Field>
