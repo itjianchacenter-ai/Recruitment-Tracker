@@ -4127,6 +4127,7 @@ ${HR_EMAIL}`;
       const [drill, setDrill] = useState(null);   // null | 'open' | 'waiting' — การ์ดที่กดดูรายละเอียด
       const [turnScope, setTurnScope] = useState('');   // '' = ทั้งองค์กร · 'hq:<ฝ่าย>' · 'br:<สาขา>'
       const [salesMap, setSalesMap] = useState({});     // { branch: ยอดขาย }
+      const [salesBranch, setSalesBranch] = useState('');   // สาขาที่เลือกดู/กรอกยอดขาย
       useEffect(() => {
         listEmployees().then(setEmps).catch(() => setEmps([]));
         listAtsCandidates().then(setAts).catch(() => setAts([]));
@@ -4285,50 +4286,42 @@ ${HR_EMAIL}`;
             </div>
           </div>
 
-          {/* ===== 1.4) Branch Sales vs Cost ===== */}
-          <div className="pt-4 border-t border-slate-200">
-            <h3 className="text-sm font-bold text-slate-800 mb-2">💰 ยอดขาย vs ต้นทุนพนักงาน (รายสาขา) <span className="text-xs font-normal text-slate-400">· เฉพาะสาขา · ใส่ยอดขายเพื่อเทียบ</span></h3>
-            {branchSalesRows.length === 0 ? (
-              <div className="text-center text-slate-400 text-xs py-6 bg-white border border-dashed border-slate-200 rounded-xl">ยังไม่มีพนักงานสาขา</div>
-            ) : (
-              <div className="bg-white border border-slate-200 rounded-2xl overflow-x-auto">
-                <table className="w-full text-xs">
-                  <thead className="bg-slate-50 text-slate-500 text-left">
-                    <tr>
-                      <th className="px-3 py-2 font-medium">สาขา</th>
-                      <th className="px-3 py-2 font-medium text-right">พนักงาน</th>
-                      <th className="px-3 py-2 font-medium text-right">เงินเดือนรวม/เดือน</th>
-                      <th className="px-3 py-2 font-medium text-right">ยอดขาย</th>
-                      <th className="px-3 py-2 font-medium text-right">ยอดขาย/หัว</th>
-                      <th className="px-3 py-2 font-medium text-right">%เงินเดือน/ยอดขาย</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {branchSalesRows.map(r => {
-                      const sales = Number(String(salesMap[r.branch] ?? '').replace(/[, ]/g, '')) || 0;
-                      const perHead = r.head ? Math.round(sales / r.head) : 0;
-                      const ratio = sales ? (r.salary / sales * 100) : null;
-                      return (
-                        <tr key={r.branch} className="hover:bg-slate-50">
-                          <td className="px-3 py-2 font-medium text-slate-800 whitespace-nowrap">{r.branch}</td>
-                          <td className="px-3 py-2 text-right text-slate-600">{r.head}</td>
-                          <td className="px-3 py-2 text-right text-slate-600 whitespace-nowrap">{money0(r.salary)} ฿</td>
-                          <td className="px-3 py-2 text-right">
-                            {canEdit()
-                              ? <input value={salesMap[r.branch] ?? ''} inputMode="numeric" placeholder="ใส่ยอดขาย" onChange={e => setSalesMap(m => ({ ...m, [r.branch]: e.target.value }))} onBlur={e => saveSales(r.branch, e.target.value)} className="w-28 text-right text-xs border border-slate-200 rounded-lg px-2 py-1 focus:outline-none focus:ring-2 focus:ring-emerald-300" />
-                              : <span className="text-slate-600">{sales ? money0(sales) + ' ฿' : '-'}</span>}
-                          </td>
-                          <td className="px-3 py-2 text-right text-emerald-700 font-medium whitespace-nowrap">{sales ? money0(perHead) + ' ฿' : '-'}</td>
-                          <td className="px-3 py-2 text-right">{ratio != null ? <span className={ratio > 30 ? 'text-rose-600 font-medium' : 'text-slate-600'}>{ratio.toFixed(1)}%</span> : '-'}</td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
+          {/* ===== 1.4) Branch Sales vs Cost (เลือก 1 สาขา) ===== */}
+          {(() => {
+            const sel = branchSalesRows.find(r => r.branch === salesBranch);
+            const sales = sel ? (Number(String(salesMap[sel.branch] ?? '').replace(/[, ]/g, '')) || 0) : 0;
+            const perHead = sel && sel.head ? Math.round(sales / sel.head) : 0;
+            const ratio = sel && sales ? (sel.salary / sales * 100) : null;
+            return (
+              <div className="pt-4 border-t border-slate-200">
+                <div className="flex items-center justify-between gap-2 flex-wrap mb-2">
+                  <h3 className="text-sm font-bold text-slate-800">💰 ยอดขาย vs ต้นทุนพนักงาน <span className="text-xs font-normal text-slate-400">· เฉพาะสาขา</span></h3>
+                  <select value={salesBranch} onChange={e => setSalesBranch(e.target.value)} className="text-xs border border-slate-200 rounded-lg px-2 py-1.5 bg-white">
+                    <option value="">— เลือกสาขา —</option>
+                    {branchSalesRows.map(r => <option key={r.branch} value={r.branch}>{r.branch}</option>)}
+                  </select>
+                </div>
+                {!sel ? (
+                  <div className="text-center text-slate-400 text-xs py-8 bg-white border border-dashed border-slate-200 rounded-2xl">เลือกสาขาจากด้านบนเพื่อดูจำนวนพนักงาน · เงินเดือนรวม แล้วกรอกยอดขายเทียบ</div>
+                ) : (
+                  <div className="bg-white border border-slate-200 rounded-2xl p-4">
+                    <div className="grid grid-cols-2 sm:grid-cols-5 gap-4">
+                      <div><div className="text-[11px] text-slate-500">พนักงาน</div><div className="text-xl font-bold text-slate-900">{sel.head} <span className="text-sm font-normal text-slate-400">คน</span></div></div>
+                      <div><div className="text-[11px] text-slate-500">เงินเดือนรวม/เดือน</div><div className="text-xl font-bold text-slate-900">{money0(sel.salary)} <span className="text-sm font-normal text-slate-400">฿</span></div></div>
+                      <div><div className="text-[11px] text-slate-500">ยอดขาย</div>
+                        {canEdit()
+                          ? <input value={salesMap[sel.branch] ?? ''} inputMode="numeric" placeholder="ใส่ยอดขาย" onChange={e => setSalesMap(m => ({ ...m, [sel.branch]: e.target.value }))} onBlur={e => saveSales(sel.branch, e.target.value)} className="w-full text-lg font-bold border border-slate-200 rounded-lg px-2 py-1 mt-0.5 focus:outline-none focus:ring-2 focus:ring-emerald-300" />
+                          : <div className="text-xl font-bold text-slate-900">{sales ? money0(sales) + ' ฿' : '-'}</div>}
+                      </div>
+                      <div><div className="text-[11px] text-slate-500">ยอดขาย/หัว</div><div className="text-xl font-bold text-emerald-700">{sales ? money0(perHead) + ' ฿' : '-'}</div></div>
+                      <div><div className="text-[11px] text-slate-500">%เงินเดือน/ยอดขาย</div><div className={`text-xl font-bold ${ratio != null && ratio > 30 ? 'text-rose-600' : 'text-slate-900'}`}>{ratio != null ? ratio.toFixed(1) + '%' : '-'}</div></div>
+                    </div>
+                    <div className="text-[11px] text-slate-400 mt-2">พนักงาน/เงินเดือน ดึงจาก Employee Database · ยอดขายกรอกเอง (บันทึกอัตโนมัติ) · %เงินเดือน/ยอดขาย = ต้นทุนคนเทียบรายได้ (ยิ่งต่ำยิ่งดี · &gt;30% = สีแดง)</div>
+                  </div>
+                )}
               </div>
-            )}
-            <div className="text-[11px] text-slate-400 mt-1.5">พนักงาน/เงินเดือน ดึงจาก Employee Database (เฉพาะสาขา) · ยอดขายกรอกเอง บันทึกอัตโนมัติ · %เงินเดือน/ยอดขาย = ต้นทุนคนเทียบรายได้ (ยิ่งต่ำยิ่งดี)</div>
-          </div>
+            );
+          })()}
 
           {/* ===== 1.5) Turnover ===== */}
           <div className="pt-4 border-t border-slate-200">
