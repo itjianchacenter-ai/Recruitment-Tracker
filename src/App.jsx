@@ -6775,6 +6775,62 @@ ${HR_EMAIL}`;
       return { approvers, status:'rejected' };
     }
 
+    // ---- PDF helpers · pdf.js (แสดงหน้า PDF เพื่อวางช่องเซ็น) + pdf-lib (ฝังลายเซ็น) · โหลดจาก CDN ----
+    function _dataUrlToBytes(dataUrl) {
+      const b64 = String(dataUrl || '').split(',')[1] || '';
+      const bin = atob(b64); const bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      return bytes;
+    }
+    function _downloadBytes(bytes, filename) {
+      const blob = new Blob([bytes], { type: 'application/pdf' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a'); a.href = url; a.download = filename; document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 4000);
+    }
+    const isPdfFile = (f) => f && (/\.pdf$/i.test(f.name || '') || /pdf/i.test(f.type || ''));
+    // เรนเดอร์หน้า PDF -> [{dataUrl,w,h}] (สำหรับวางกล่องช่องเซ็น)
+    async function pdfRenderPages(file, maxPages = 10) {
+      const lib = window.pdfjsLib; if (!lib) throw new Error('pdf.js ยังโหลดไม่เสร็จ');
+      const buf = file.arrayBuffer ? await file.arrayBuffer() : file;
+      const withTimeout = (p, ms) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error('หมดเวลาโหลด PDF')), ms))]);
+      const pdf = await withTimeout(lib.getDocument({ data: buf.slice ? buf.slice(0) : buf }).promise, 12000);
+      const pages = []; const n = Math.min(pdf.numPages, maxPages);
+      for (let p = 1; p <= n; p++) {
+        const page = await pdf.getPage(p);
+        const viewport = page.getViewport({ scale: 1.4 });
+        const canvas = document.createElement('canvas');
+        canvas.width = viewport.width; canvas.height = viewport.height;
+        await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
+        pages.push({ dataUrl: canvas.toDataURL('image/png'), w: viewport.width, h: viewport.height });
+      }
+      return pages;
+    }
+    // ฝังลายเซ็นของผู้เซ็นที่เซ็นแล้ว (มี box + signature_data) ลงไฟล์ PDF ต้นฉบับ
+    async function pdfEmbedSignatures(pdfArrayBuffer, approvers) {
+      const PL = window.PDFLib; if (!PL) throw new Error('pdf-lib ยังโหลดไม่เสร็จ');
+      const doc = await PL.PDFDocument.load(pdfArrayBuffer);
+      const pages = doc.getPages();
+      const font = await doc.embedFont(PL.StandardFonts.Helvetica);
+      for (const a of (approvers || [])) {
+        if (a.status !== 'approved' || !a.box || !a.signature_data) continue;
+        const pg = pages[a.box.page || 0] || pages[0]; if (!pg) continue;
+        const pw = pg.getWidth(), ph = pg.getHeight();
+        const bx = a.box.x * pw, bw = a.box.w * pw, bh = a.box.h * ph;
+        const by = ph * (1 - a.box.y - a.box.h);   // top-left (หน้าเว็บ) -> bottom-left (pdf)
+        try {
+          const bytes = _dataUrlToBytes(a.signature_data);
+          const img = /^data:image\/jpe?g/i.test(a.signature_data) ? await doc.embedJpg(bytes) : await doc.embedPng(bytes);
+          const scale = Math.min(bw / img.width, bh / img.height);
+          const dw = img.width * scale, dh = img.height * scale;
+          pg.drawImage(img, { x: bx + (bw - dw) / 2, y: by + (bh - dh) / 2, width: dw, height: dh });
+        } catch (_) { /* ลายเซ็นฝังไม่ได้ ข้าม */ }
+        // ไฟล์ PDF มีชื่อ+ตำแหน่งพิมพ์ในช่องอยู่แล้ว → ฝังเฉพาะรูปลายเซ็น + วันที่ (ASCII) มุมกล่อง
+        try { const dt = a.signedAt ? new Date(a.signedAt).toISOString().slice(0, 10) : ''; if (dt) pg.drawText(dt, { x: bx, y: Math.max(by - 8, 2), size: 5, font, color: PL.rgb(0.4, 0.4, 0.4) }); } catch (_) {}
+      }
+      return await doc.save();
+    }
+
     function DocumentView({ me }) {
       const myEmail = normEmail(me?.email || '');
       const [docs, setDocs] = useState(null);   // null = loading
@@ -6923,6 +6979,20 @@ ${HR_EMAIL}`;
       const [rejecting, setRejecting] = useState(false);
       const myTurn = isMyTurn(d);
       const cur = currentSigner(d);
+      const [dling, setDling] = useState(false);
+      const canDownloadSigned = isPdfFile(d.main_file) && (d.approvers || []).some(a => a.status === 'approved' && a.box && a.signature_data);
+      const downloadSigned = async () => {
+        if (!d.main_file?.path) return;
+        setDling(true);
+        try {
+          const url = await getSignedUrl(d.main_file.path);
+          const buf = await (await fetch(url)).arrayBuffer();
+          const out = await pdfEmbedSignatures(buf, d.approvers || []);
+          _downloadBytes(out, ((d.doc_number || d.title || 'document') + '_signed.pdf').replace(/[^\w.\-ก-๙]+/g, '_'));
+          showToast('ดาวน์โหลด PDF ที่ลงนามแล้ว', 'success');
+        } catch (e) { showToast('สร้าง PDF ลงนามไม่สำเร็จ: ' + (e?.message || ''), 'warning'); }
+        setDling(false);
+      };
 
       const doSign = async () => {
         if (!sigData) { showToast('กรุณาวาดหรืออัปโหลดลายเซ็นก่อน', 'warning'); return; }
@@ -6943,6 +7013,7 @@ ${HR_EMAIL}`;
               <div className="border border-slate-200 rounded-lg p-3">
                 <div className="text-[11px] font-semibold text-slate-500 mb-1.5">📄 เอกสารหลัก</div>
                 {d.main_file ? <button onClick={() => openFile(d.main_file)} className="text-sm text-indigo-600 hover:underline break-all text-left">{d.main_file.name}</button> : <span className="text-xs text-slate-400">—</span>}
+                {canDownloadSigned && <button onClick={downloadSigned} disabled={dling} className="mt-2 block text-xs bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-lg ibtn disabled:opacity-50">{dling ? 'กำลังสร้าง…' : '⬇ ดาวน์โหลด PDF ที่ลงนามแล้ว'}</button>}
               </div>
               <div className="border border-slate-200 rounded-lg p-3">
                 <div className="text-[11px] font-semibold text-slate-500 mb-1.5">📎 ไฟล์ประกอบ ({(d.attachments || []).length})</div>
@@ -7010,6 +7081,30 @@ ${HR_EMAIL}`;
       const [nName, setNName] = useState('');
       const [nEmail, setNEmail] = useState('');
       const [nRole, setNRole] = useState('');
+      // วางช่องเซ็นบน PDF: boxes keyed by email → {page,x,y,w,h} (normalized top-left)
+      const [pdfPages, setPdfPages] = useState(null);   // null = ยังไม่ render · [] = render ไม่ได้
+      const [pageIdx, setPageIdx] = useState(0);
+      const [boxes, setBoxes] = useState({});
+      const [selSigner, setSelSigner] = useState(0);
+      const [rendering, setRendering] = useState(false);
+
+      const loadMain = async (file) => {
+        setMainFile(file); setPdfPages(null); setBoxes({}); setPageIdx(0);
+        if (file && isPdfFile(file) && window.pdfjsLib) {
+          setRendering(true);
+          try { setPdfPages(await pdfRenderPages(file)); } catch (e) { setPdfPages([]); showToast('เปิดพรีวิว PDF ไม่ได้: ' + (e?.message || ''), 'warning'); }
+          setRendering(false);
+        }
+      };
+      const placeBox = (e, email) => {
+        const s = signers[selSigner]; if (!s) { showToast('เลือกผู้เซ็นก่อน แล้วคลิกวางช่อง', 'warning'); return; }
+        const rect = e.currentTarget.getBoundingClientRect();
+        const w = 0.24, h = 0.06;
+        let x = (e.clientX - rect.left) / rect.width - w / 2;
+        let y = (e.clientY - rect.top) / rect.height - h / 2;
+        x = Math.max(0, Math.min(1 - w, x)); y = Math.max(0, Math.min(1 - h, y));
+        setBoxes(bs => ({ ...bs, [s.email]: { page: pageIdx, x, y, w, h } }));
+      };
 
       const addSigner = () => {
         const name = nName.trim(), email = nEmail.trim();
@@ -7033,7 +7128,7 @@ ${HR_EMAIL}`;
           const main = await uploadDocFile(mainFile);
           const atts = [];
           for (const f of attachFiles) atts.push(await uploadDocFile(f));
-          const approvers = signers.map((s, i) => ({ id:'s' + (i + 1), name:s.name, email:s.email, role:s.role || '', sequence:i + 1, status:i === 0 ? 'pending' : 'waiting', signedAt:null, ip:null, signature_data:null, comment:'' }));
+          const approvers = signers.map((s, i) => ({ id:'s' + (i + 1), name:s.name, email:s.email, role:s.role || '', sequence:i + 1, status:i === 0 ? 'pending' : 'waiting', signedAt:null, ip:null, signature_data:null, comment:'', ...(boxes[s.email] ? { box: boxes[s.email] } : {}) }));
           const row = await createDocument({ title:title.trim(), doc_number:docNo.trim() || null, category:category || null, description:desc.trim() || null, main_file:main, attachments:atts, approvers, status:'pending', current_seq:1 });
           showToast('อัปโหลดเอกสาร + ส่งเซ็นเรียบร้อย', 'success');
           onCreated(row);
@@ -7059,8 +7154,8 @@ ${HR_EMAIL}`;
               <textarea value={desc} onChange={e => setDesc(e.target.value)} rows={3} className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 mt-0.5" placeholder="บริบท/รายละเอียดของเอกสารที่ส่งเซ็น" /></div>
 
             <div className="grid sm:grid-cols-2 gap-3">
-              <div><label className="text-[11px] text-slate-500">ไฟล์เอกสารหลัก *</label>
-                <input type="file" onChange={e => setMainFile(e.target.files?.[0] || null)} className="w-full text-xs mt-1" />
+              <div><label className="text-[11px] text-slate-500">ไฟล์เอกสารหลัก * <span className="text-slate-400">(PDF วางช่องเซ็นได้)</span></label>
+                <input type="file" accept="application/pdf,.pdf,*" onChange={e => loadMain(e.target.files?.[0] || null)} className="w-full text-xs mt-1" />
                 {mainFile && <div className="text-[11px] text-emerald-700 mt-1">✓ {mainFile.name}</div>}</div>
               <div><label className="text-[11px] text-slate-500">ไฟล์ประกอบ (แนบได้หลายไฟล์)</label>
                 <input type="file" multiple onChange={e => setAttachFiles(a => [...a, ...Array.from(e.target.files || [])])} className="w-full text-xs mt-1" />
@@ -7094,6 +7189,37 @@ ${HR_EMAIL}`;
                 ))}
               </div>}
             </div>
+
+            {/* กำหนดตำแหน่งช่องเซ็นบน PDF (ไม่บังคับ) */}
+            {mainFile && isPdfFile(mainFile) && signers.length > 0 && (
+              <div className="border border-slate-200 rounded-xl p-3">
+                <div className="text-[11px] font-semibold text-slate-600">🖊️ กำหนดตำแหน่งช่องเซ็น <span className="text-slate-400">(ไม่บังคับ)</span></div>
+                <div className="text-[10px] text-slate-400 mb-2">เลือกผู้เซ็น แล้วคลิกบนหน้าเอกสารตรงช่องเซ็นของเขา · ตั้งไว้แล้วระบบจะฝังลายเซ็นลง PDF ตรงช่องเมื่อดาวน์โหลด</div>
+                {rendering ? <div className="text-xs text-slate-400 py-3">กำลังเปิดไฟล์ PDF…</div>
+                  : !pdfPages || pdfPages.length === 0 ? <div className="text-xs text-amber-600 py-2">เปิดพรีวิว PDF ไม่ได้ (ต้องเป็นไฟล์ PDF · ข้ามได้ · ยังเซ็นในระบบได้ปกติ)</div>
+                  : <>
+                    <div className="flex flex-wrap gap-1.5 mb-2">
+                      {signers.map((s, i) => (
+                        <button key={i} type="button" onClick={() => setSelSigner(i)} className={`text-[11px] px-2 py-1 rounded-lg border ibtn ${selSigner === i ? 'bg-slate-900 text-white border-slate-900' : 'bg-white border-slate-200 text-slate-600'}`}>
+                          {i + 1}. {s.name}{boxes[s.email] ? ' ✓' : ''}
+                        </button>
+                      ))}
+                    </div>
+                    {pdfPages.length > 1 && <div className="flex items-center gap-2 mb-1.5 text-xs text-slate-600">
+                      <button type="button" onClick={() => setPageIdx(p => Math.max(0, p - 1))} disabled={pageIdx === 0} className="px-2 py-0.5 border border-slate-200 rounded disabled:opacity-30">◀</button>
+                      หน้า {pageIdx + 1}/{pdfPages.length}
+                      <button type="button" onClick={() => setPageIdx(p => Math.min(pdfPages.length - 1, p + 1))} disabled={pageIdx === pdfPages.length - 1} className="px-2 py-0.5 border border-slate-200 rounded disabled:opacity-30">▶</button>
+                    </div>}
+                    <div className="relative w-full border border-slate-200 rounded-lg overflow-hidden cursor-crosshair" onClick={placeBox}>
+                      <img src={pdfPages[pageIdx].dataUrl} alt="pdf" style={{ display: 'block', width: '100%' }} />
+                      {signers.map((s, i) => { const b = boxes[s.email]; if (!b || b.page !== pageIdx) return null;
+                        return <div key={i} style={{ position: 'absolute', left: (b.x * 100) + '%', top: (b.y * 100) + '%', width: (b.w * 100) + '%', height: (b.h * 100) + '%' }}
+                          className="border-2 border-emerald-500 bg-emerald-400/20 text-[8px] leading-tight text-emerald-900 font-semibold flex items-center justify-center rounded pointer-events-none overflow-hidden">{i + 1}.{s.name}</div>;
+                      })}
+                    </div>
+                  </>}
+              </div>
+            )}
 
             <div className="flex justify-end gap-2 pt-1">
               <button onClick={onClose} className="text-sm text-slate-600 px-4 py-2">ยกเลิก</button>
