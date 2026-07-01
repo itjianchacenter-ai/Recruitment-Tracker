@@ -46,9 +46,12 @@ export function levelFromSession(session) {
 
 // actor used for audit / created_by / updated_by — derived from logged-in user
 let _actor = 'HR';
+let _actorEmail = '';
 export function getActor() { return _actor; }
-supabase.auth.getSession().then(({ data }) => { _actor = actorFromSession(data.session); });
-supabase.auth.onAuthStateChange((_event, session) => { _actor = actorFromSession(session); });
+// full login email of current user — used to match signer rows in "งานของฉัน"
+export function getActorEmail() { return _actorEmail; }
+supabase.auth.getSession().then(({ data }) => { _actor = actorFromSession(data.session); _actorEmail = (data.session?.user?.email || '').toLowerCase(); });
+supabase.auth.onAuthStateChange((_event, session) => { _actor = actorFromSession(session); _actorEmail = (session?.user?.email || '').toLowerCase(); });
 
 export async function signIn(username, password) {
   const { data, error } = await supabase.auth.signInWithPassword({
@@ -240,6 +243,44 @@ export async function upsertBranchSales(branch, sales) {
   const { error } = await supabase.from('branch_sales')
     .upsert({ branch, sales: Number(sales) || 0, updated_by: getActor(), updated_at: new Date().toISOString() }, { onConflict: 'branch' });
   if (error) throw error;
+}
+
+// ---------- Documents (เอกสารเซ็นออนไลน์ · e-signature workflow) -----------
+// เอกสาร 1 ใบ = ไฟล์หลัก + ไฟล์ประกอบหลายไฟล์ + ผู้เซ็นเรียงตามลำดับ.
+// ไฟล์จริงอยู่ใน bucket "recruitment" (path documents/...) · ตารางเก็บ metadata.
+export async function listDocuments() {
+  const { data, error } = await supabase
+    .from('documents').select('*').order('created_at', { ascending: false });
+  if (error) throw error;
+  return data ?? [];
+}
+export async function createDocument(payload) {
+  const actor = getActor();
+  const { data, error } = await supabase
+    .from('documents').insert({ ...payload, created_by: actor, updated_by: actor })
+    .select().single();
+  if (error) throw error;
+  return data;
+}
+export async function updateDocument(id, patch) {
+  const { data, error } = await supabase
+    .from('documents')
+    .update({ ...patch, updated_by: getActor(), updated_at: new Date().toISOString() })
+    .eq('id', id).select().single();
+  if (error) throw error;
+  return data;
+}
+export async function deleteDocument(id) {
+  const { error } = await supabase.from('documents').delete().eq('id', id);
+  if (error) throw error;
+}
+// อัปโหลดไฟล์เอกสาร (หลัก/ประกอบ/ไฟล์เซ็น) -> bucket recruitment, path documents/{ts}_{name}
+export async function uploadDocFile(file) {
+  const safeName = file.name.replace(/[^\w.\-]+/g, '_');
+  const path = `documents/${Date.now()}_${Math.random().toString(36).slice(2, 8)}_${safeName}`;
+  const { error } = await supabase.storage.from(BUCKET).upload(path, file, { upsert: false });
+  if (error) throw error;
+  return { path, name: file.name, size: file.size, type: file.type || '', uploadedAt: new Date().toISOString(), uploadedBy: getActor() };
 }
 
 // ---------- Storage (resume / signed docs / pre-boarding uploads) ----------

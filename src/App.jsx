@@ -10,7 +10,8 @@ import {
   listAtsPositions, createAtsPosition, deleteAtsPosition, listAtsSources, createAtsSource,
   listAtsCandidates, createAtsCandidate, updateAtsCandidate, deleteAtsCandidate, uploadResume,
   listEmployees, createEmployee, updateEmployee, deleteEmployee,
-  listBranchSales, upsertBranchSales
+  listBranchSales, upsertBranchSales,
+  listDocuments, createDocument, updateDocument, deleteDocument, uploadDocFile
 } from './lib/supabase.js';
 
 // ---------------------------------------------------------------------------
@@ -4987,6 +4988,7 @@ ${HR_EMAIL}`;
               <div className="flex items-center gap-2 text-sm flex-wrap">
                 <button onClick={() => setTab('reports')} className={`bg-white border rounded-xl px-4 py-1.5 font-medium ibtn ${tab==='reports' ? 'border-slate-300 shadow-sm text-slate-900' : 'border-slate-200 text-slate-500 hover:text-slate-700 hover:border-slate-300'}`}>📊 Reports / KPI</button>
                 <button onClick={() => setTab('pipeline')} className={`bg-white border rounded-xl px-4 py-1.5 font-medium ibtn ${tab==='pipeline' ? 'border-slate-300 shadow-sm text-slate-900' : 'border-slate-200 text-slate-500 hover:text-slate-700 hover:border-slate-300'}`}>📋 Pipeline</button>
+                <button onClick={() => setTab('documents')} className={`bg-white border rounded-xl px-4 py-1.5 font-medium ibtn ${tab==='documents' ? 'border-slate-300 shadow-sm text-slate-900' : 'border-slate-200 text-slate-500 hover:text-slate-700 hover:border-slate-300'}`}>✍️ Document</button>
                 <button onClick={() => setTab('employees')} className={`bg-white border rounded-xl px-4 py-1.5 font-medium ibtn ${tab==='employees' ? 'border-slate-300 shadow-sm text-slate-900' : 'border-slate-200 text-slate-500 hover:text-slate-700 hover:border-slate-300'}`}>👥 Employee Database</button>
                 <button onClick={() => setTab('foreigners')} className={`bg-white border rounded-xl px-4 py-1.5 font-medium ibtn ${tab==='foreigners' ? 'border-slate-300 shadow-sm text-slate-900' : 'border-slate-200 text-slate-500 hover:text-slate-700 hover:border-slate-300'}`}>🌏 Foreigners Database</button>
                 <button onClick={() => setTab('candidates')} className={`bg-white border rounded-xl px-4 py-1.5 font-medium ibtn ${tab==='candidates' ? 'border-slate-300 shadow-sm text-slate-900' : 'border-slate-200 text-slate-500 hover:text-slate-700 hover:border-slate-300'}`}>🗂 Candidate Database</button>
@@ -5002,6 +5004,7 @@ ${HR_EMAIL}`;
             {tab === 'branches' && <BranchesManning cfg={MANNING_CFG.branch} />}
             {tab === 'hq' && <BranchesManning cfg={MANNING_CFG.hq} />}
             {tab === 'candidates' && <CandidateDatabaseView />}
+            {tab === 'documents' && <DocumentView me={user} />}
             {tab === 'employees' && <EmployeeDatabaseView kind="local" />}
             {tab === 'foreigners' && <EmployeeDatabaseView kind="foreign" />}
 
@@ -6678,6 +6681,339 @@ ${HR_EMAIL}`;
             </div>
           )}
         </div>
+      );
+    }
+
+    // ===================== Document · เซ็นเอกสารออนไลน์ =====================
+    // อัปโหลดเอกสาร → เลือกผู้เซ็นตามลำดับ → ผู้เซ็นเห็นใน "งานของฉัน" → e-sign
+    // (วาด/อัปโหลดลายเซ็น) + ไฟล์ประกอบ. ใช้ลอจิกลำดับ + audit (IP) ชุดเดียวกับ
+    // งานสรรหา. เก็บที่ตาราง documents (Supabase) · ไฟล์อยู่ bucket recruitment.
+    const DOC_CATEGORIES = ['สัญญาจ้างงาน','หนังสือรับรอง','Offer Letter','NDA / รักษาความลับ','บันทึกข้อความ (Memo)','หนังสือเตือน / ตักเตือน','ใบประเมินผล','เอกสารการเงิน','อื่นๆ'];
+    const DOC_STATUS_BADGE = {
+      pending:   { txt:'รอเซ็น',    cls:'bg-amber-100 text-amber-800 border-amber-200' },
+      completed: { txt:'เซ็นครบแล้ว', cls:'bg-emerald-100 text-emerald-800 border-emerald-200' },
+      rejected:  { txt:'ถูกปฏิเสธ',  cls:'bg-rose-100 text-rose-700 border-rose-200' },
+      canceled:  { txt:'ยกเลิก',     cls:'bg-slate-100 text-slate-500 border-slate-200' },
+    };
+    const SIGNER_STATE_BADGE = {
+      approved: { txt:'✓ เซ็นแล้ว', cls:'bg-emerald-100 text-emerald-800 border-emerald-200' },
+      pending:  { txt:'⏳ ถึงคิว',   cls:'bg-amber-100 text-amber-800 border-amber-200' },
+      waiting:  { txt:'รอคิว',      cls:'bg-slate-100 text-slate-500 border-slate-200' },
+      rejected: { txt:'✕ ปฏิเสธ',   cls:'bg-rose-100 text-rose-700 border-rose-200' },
+    };
+    const normEmail = (e) => usernameToEmail(String(e || '')).toLowerCase();
+
+    function DocumentView({ me }) {
+      const myEmail = normEmail(me?.email || '');
+      const [docs, setDocs] = useState(null);   // null = loading
+      const [err, setErr] = useState('');
+      const [openDoc, setOpenDoc] = useState(null);
+      const [creating, setCreating] = useState(false);
+
+      useEffect(() => { (async () => {
+        try { setDocs(await listDocuments()); }
+        catch (e) { setErr(e?.message || String(e)); setDocs([]); }
+      })(); }, []);
+
+      const currentSigner = (d) => (d.approvers || []).find(a => a.status === 'pending');
+      const isMyTurn = (d) => { const c = currentSigner(d); return d.status === 'pending' && c && normEmail(c.email) === myEmail; };
+      const iAmSigner = (d) => (d.approvers || []).some(a => normEmail(a.email) === myEmail);
+
+      const openFile = async (f) => {
+        if (!f?.path) return;
+        try { const url = await getSignedUrl(f.path); window.open(url, '_blank'); }
+        catch (e) { showToast('เปิดไฟล์ไม่สำเร็จ: ' + (e?.message || ''), 'warning'); }
+      };
+
+      const applyRow = (row) => setDocs(ds => ds.map(d => d.id === row.id ? row : d));
+
+      // ----- ลงนาม / ปฏิเสธ (ใช้ลำดับเดียวกับงานสรรหา) -----
+      const signDoc = async (d, signatureDataUrl, comment) => {
+        const ip = await getClientIp();
+        const approvers = (d.approvers || []).map(a => ({ ...a }));
+        const i = approvers.findIndex(a => normEmail(a.email) === myEmail && a.status === 'pending');
+        if (i < 0) { showToast('ไม่ใช่คิวของคุณ', 'warning'); return; }
+        approvers[i] = { ...approvers[i], status:'approved', signedAt:new Date().toISOString(), ip, signature_data:signatureDataUrl, comment:(comment || '').trim() };
+        let status = d.status, current_seq = d.current_seq;
+        const nextIdx = approvers.findIndex(a => a.status === 'waiting');
+        if (nextIdx >= 0) { approvers[nextIdx] = { ...approvers[nextIdx], status:'pending' }; current_seq = approvers[nextIdx].sequence; status = 'pending'; }
+        else { status = 'completed'; }
+        try {
+          const row = await updateDocument(d.id, { approvers, status, current_seq });
+          applyRow(row); setOpenDoc(null);
+          showToast(status === 'completed' ? '✓ ลงนามครบทุกคนแล้ว · เอกสารสมบูรณ์' : '✓ ลงนามเรียบร้อย · ส่งต่อคิวถัดไป', 'success');
+        } catch (e) { showToast('บันทึกลายเซ็นไม่สำเร็จ: ' + (e?.message || ''), 'warning'); }
+      };
+      const rejectDoc = async (d, comment) => {
+        const ip = await getClientIp();
+        const approvers = (d.approvers || []).map(a => ({ ...a }));
+        const i = approvers.findIndex(a => normEmail(a.email) === myEmail && a.status === 'pending');
+        if (i < 0) return;
+        approvers[i] = { ...approvers[i], status:'rejected', signedAt:new Date().toISOString(), ip, comment:(comment || '').trim() };
+        try {
+          const row = await updateDocument(d.id, { approvers, status:'rejected' });
+          applyRow(row); setOpenDoc(null);
+          showToast('ปฏิเสธเอกสารแล้ว', 'warning');
+        } catch (e) { showToast('บันทึกไม่สำเร็จ: ' + (e?.message || ''), 'warning'); }
+      };
+      const removeDoc = async (d) => {
+        if (!confirm(`ลบเอกสาร "${d.title}" ?`)) return;
+        try { await deleteDocument(d.id); setDocs(ds => ds.filter(x => x.id !== d.id)); setOpenDoc(null); showToast('ลบเอกสารแล้ว', 'success'); }
+        catch (e) { showToast('ลบไม่สำเร็จ: ' + (e?.message || ''), 'warning'); }
+      };
+
+      if (docs === null) return <div className="text-center text-slate-400 text-sm py-16">กำลังโหลด Document…</div>;
+
+      const inbox = docs.filter(isMyTurn);
+      const mineWaiting = docs.filter(d => !isMyTurn(d) && d.status === 'pending' && iAmSigner(d) && (d.approvers || []).some(a => normEmail(a.email) === myEmail && a.status === 'waiting'));
+      const mineDone = docs.filter(d => iAmSigner(d) && (d.approvers || []).some(a => normEmail(a.email) === myEmail && (a.status === 'approved' || a.status === 'rejected')));
+
+      const progress = (d) => { const t = (d.approvers || []).length; const s = (d.approvers || []).filter(a => a.status === 'approved').length; return `${s}/${t}`; };
+
+      const DocCard = ({ d, highlight }) => {
+        const badge = DOC_STATUS_BADGE[d.status] || DOC_STATUS_BADGE.pending;
+        const cur = currentSigner(d);
+        return (
+          <button onClick={() => setOpenDoc(d)} className={`text-left w-full bg-white border rounded-xl p-3.5 hover:shadow-sm ibtn ${highlight ? 'border-amber-300 ring-1 ring-amber-200' : 'border-slate-200'}`}>
+            <div className="flex items-start justify-between gap-2">
+              <div className="min-w-0">
+                <div className="font-medium text-slate-900 text-sm truncate">{d.title}</div>
+                <div className="text-[11px] text-slate-400 mt-0.5">{d.doc_number ? d.doc_number + ' · ' : ''}{d.category || 'เอกสาร'} · {fmtDate(d.created_at)}</div>
+              </div>
+              <span className={`shrink-0 text-[10px] px-2 py-0.5 rounded-full border ${badge.cls}`}>{badge.txt}</span>
+            </div>
+            <div className="flex items-center justify-between mt-2 text-[11px] text-slate-500">
+              <span>เซ็นแล้ว {progress(d)} คน{cur ? ` · ถึงคิว: ${cur.name}` : ''}</span>
+              <span className="text-slate-400">{(d.attachments || []).length > 0 ? `📎 ${(d.attachments || []).length}` : ''}</span>
+            </div>
+          </button>
+        );
+      };
+
+      return (
+        <div className="space-y-5">
+          <div className="flex items-center justify-between gap-2 flex-wrap">
+            <h2 className="text-base font-semibold text-slate-900">✍️ Document <span className="text-xs font-normal text-slate-400">· เซ็นเอกสารออนไลน์ · {docs.length} ฉบับ</span></h2>
+            {canEdit() && <button onClick={() => setCreating(true)} className="inline-flex items-center gap-1.5 bg-slate-900 hover:bg-slate-800 text-white text-sm font-medium px-3.5 py-2 rounded-lg ibtn"><span className="text-base leading-none">+</span> อัปโหลดเอกสารใหม่</button>}
+          </div>
+
+          {err && <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-800">⚠️ ใช้งาน Document ไม่ได้: {err} · ตรวจว่ารัน <b>supabase/documents.sql</b> บน Supabase แล้ว</div>}
+
+          {/* งานของฉัน — เอกสารรอเซ็น */}
+          <div className="bg-amber-50/60 border border-amber-200 rounded-2xl p-4">
+            <div className="text-sm font-semibold text-amber-900 mb-2">📥 งานของฉัน — เอกสารรอเซ็น ({inbox.length})</div>
+            {inbox.length === 0
+              ? <div className="text-xs text-amber-700/70 py-2">ไม่มีเอกสารที่รอคุณเซ็นตอนนี้ 🎉</div>
+              : <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">{inbox.map(d => <DocCard key={d.id} d={d} highlight />)}</div>}
+            {mineWaiting.length > 0 && <div className="text-[11px] text-slate-500 mt-3">⏳ รอคิว (คนอื่นเซ็นก่อน): {mineWaiting.length} ฉบับ</div>}
+          </div>
+
+          {/* เอกสารทั้งหมด (แอดมิน) หรือ เอกสารที่ฉันเกี่ยวข้อง */}
+          <div>
+            <div className="text-sm font-semibold text-slate-700 mb-2">{canEdit() ? `📚 เอกสารทั้งหมด (${docs.length})` : `📄 เอกสารที่ฉันเกี่ยวข้อง (${mineDone.length + inbox.length + mineWaiting.length})`}</div>
+            {(() => {
+              const list = canEdit() ? docs : [...inbox, ...mineWaiting, ...mineDone];
+              if (list.length === 0) return <div className="text-xs text-slate-400 py-3">— ยังไม่มีเอกสาร —</div>;
+              return <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">{list.map(d => <DocCard key={d.id} d={d} />)}</div>;
+            })()}
+          </div>
+
+          {openDoc && <DocDetailModal d={docs.find(x => x.id === openDoc.id) || openDoc} onClose={() => setOpenDoc(null)}
+            myEmail={myEmail} isMyTurn={isMyTurn} currentSigner={currentSigner}
+            openFile={openFile} onSign={signDoc} onReject={rejectDoc} onRemove={removeDoc} progress={progress} />}
+          {creating && <DocCreateModal onClose={() => setCreating(false)} onCreated={(row) => { setDocs(ds => [row, ...ds]); setCreating(false); }} />}
+        </div>
+      );
+    }
+
+    // ----- Modal: รายละเอียดเอกสาร + ลงนาม -----
+    function DocDetailModal({ d, onClose, myEmail, isMyTurn, currentSigner, openFile, onSign, onReject, onRemove, progress }) {
+      const [sigData, setSigData] = useState('');
+      const [comment, setComment] = useState('');
+      const [busy, setBusy] = useState(false);
+      const [rejecting, setRejecting] = useState(false);
+      const myTurn = isMyTurn(d);
+      const cur = currentSigner(d);
+
+      const doSign = async () => {
+        if (!sigData) { showToast('กรุณาวาดหรืออัปโหลดลายเซ็นก่อน', 'warning'); return; }
+        setBusy(true); await onSign(d, sigData, comment); setBusy(false);
+      };
+      const doReject = async () => {
+        if (!comment.trim()) { showToast('กรุณาระบุเหตุผลการปฏิเสธ', 'warning'); return; }
+        setBusy(true); await onReject(d, comment); setBusy(false);
+      };
+
+      return (
+        <Modal title={'✍️ ' + d.title} subtitle={(d.doc_number ? d.doc_number + ' · ' : '') + (d.category || 'เอกสาร') + ' · สร้างโดย ' + (d.created_by || '-')} onClose={onClose} wide>
+          <div className="space-y-4">
+            {d.description && <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 text-sm text-slate-700 whitespace-pre-wrap">{d.description}</div>}
+
+            {/* ไฟล์ */}
+            <div className="grid sm:grid-cols-2 gap-3">
+              <div className="border border-slate-200 rounded-lg p-3">
+                <div className="text-[11px] font-semibold text-slate-500 mb-1.5">📄 เอกสารหลัก</div>
+                {d.main_file ? <button onClick={() => openFile(d.main_file)} className="text-sm text-indigo-600 hover:underline break-all text-left">{d.main_file.name}</button> : <span className="text-xs text-slate-400">—</span>}
+              </div>
+              <div className="border border-slate-200 rounded-lg p-3">
+                <div className="text-[11px] font-semibold text-slate-500 mb-1.5">📎 ไฟล์ประกอบ ({(d.attachments || []).length})</div>
+                {(d.attachments || []).length === 0 ? <span className="text-xs text-slate-400">—</span>
+                  : <div className="space-y-1">{(d.attachments || []).map((f, i) => <button key={i} onClick={() => openFile(f)} className="block text-sm text-indigo-600 hover:underline break-all text-left">{f.name}</button>)}</div>}
+              </div>
+            </div>
+
+            {/* ลำดับผู้เซ็น + สถานะ */}
+            <div>
+              <div className="text-[11px] font-semibold text-slate-500 mb-1.5">ลำดับการเซ็น (เซ็นแล้ว {progress(d)} คน)</div>
+              <div className="space-y-2">
+                {(d.approvers || []).map((a, i) => {
+                  const b = SIGNER_STATE_BADGE[a.status] || SIGNER_STATE_BADGE.waiting;
+                  return (
+                    <div key={a.id || i} className="flex items-start gap-3 border border-slate-200 rounded-lg p-2.5">
+                      <div className="w-6 h-6 shrink-0 rounded-full bg-slate-100 text-slate-600 text-xs flex items-center justify-center font-semibold">{a.sequence || i + 1}</div>
+                      <div className="flex-1 min-w-0">
+                        <div className="text-sm text-slate-800">{a.name} <span className="text-[11px] text-slate-400">· {a.role || '-'}</span></div>
+                        {a.signedAt && <div className="text-[10px] text-emerald-700">ลงนามเมื่อ {fmtDateTime(a.signedAt)} · IP {a.ip || '-'}</div>}
+                        {a.comment && <div className="text-[11px] text-slate-500 mt-0.5">💬 {a.comment}</div>}
+                        {a.signature_data && <div className="mt-1"><DigitalSignatureMark approver={a} index={i} /></div>}
+                      </div>
+                      <span className={`shrink-0 text-[10px] px-2 py-0.5 rounded-full border ${b.cls}`}>{b.txt}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* กล่องลงนาม (เฉพาะคนที่ถึงคิว) */}
+            {myTurn && d.status === 'pending' && (
+              <div className="border-2 border-amber-300 rounded-xl p-3.5 bg-amber-50/50">
+                <div className="text-sm font-semibold text-amber-900 mb-2">🖊️ ถึงคิวคุณลงนาม — วาดลายเซ็น หรือ อัปโหลดรูปลายเซ็น</div>
+                <SignaturePad onChange={setSigData} />
+                <textarea value={comment} onChange={e => setComment(e.target.value)} rows={2} placeholder="ความเห็น / หมายเหตุ (ถ้ามี)" className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 mt-2 focus:outline-none focus:ring-2 focus:ring-amber-300" />
+                <div className="flex items-center justify-between gap-2 mt-2">
+                  {!rejecting
+                    ? <button onClick={() => setRejecting(true)} className="text-xs text-rose-600 border border-rose-200 hover:bg-rose-50 px-3 py-1.5 rounded-lg">✕ ปฏิเสธเอกสาร</button>
+                    : <button onClick={doReject} disabled={busy} className="text-xs text-white bg-rose-600 hover:bg-rose-700 px-3 py-1.5 rounded-lg disabled:opacity-50">ยืนยันปฏิเสธ (ต้องมีเหตุผล)</button>}
+                  <button onClick={doSign} disabled={busy || !sigData} className="bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium px-5 py-2 rounded-lg disabled:opacity-50 ibtn">{busy ? 'กำลังบันทึก…' : '✓ ลงนาม'}</button>
+                </div>
+              </div>
+            )}
+            {!myTurn && d.status === 'pending' && cur && <div className="text-xs text-slate-500 text-center py-1">⏳ กำลังรอ <b>{cur.name}</b> (ลำดับ {cur.sequence}) ลงนาม</div>}
+            {d.status === 'completed' && <div className="text-xs text-emerald-700 text-center py-1 font-medium">✓ เซ็นครบทุกคนแล้ว · เอกสารสมบูรณ์</div>}
+            {d.status === 'rejected' && <div className="text-xs text-rose-700 text-center py-1 font-medium">✕ เอกสารถูกปฏิเสธ</div>}
+
+            {canEdit() && <div className="flex justify-end pt-1 border-t border-slate-100"><button onClick={() => onRemove(d)} className="text-xs text-rose-600 hover:bg-rose-50 border border-rose-200 px-3 py-1.5 rounded-lg mt-2">🗑 ลบเอกสารนี้</button></div>}
+          </div>
+        </Modal>
+      );
+    }
+
+    // ----- Modal: อัปโหลดเอกสารใหม่ + เลือกผู้เซ็นตามลำดับ -----
+    function DocCreateModal({ onClose, onCreated }) {
+      const [title, setTitle] = useState('');
+      const [docNo, setDocNo] = useState('');
+      const [category, setCategory] = useState('');
+      const [desc, setDesc] = useState('');
+      const [mainFile, setMainFile] = useState(null);
+      const [attachFiles, setAttachFiles] = useState([]);
+      const [users, setUsers] = useState(null);
+      const [signers, setSigners] = useState([]);   // [{name,email,role}]
+      const [busy, setBusy] = useState(false);
+      const [pick, setPick] = useState('');
+
+      useEffect(() => { (async () => {
+        try { setUsers(await adminListUsers()); }
+        catch (e) { setUsers([]); showToast('โหลดรายชื่อผู้ใช้ไม่สำเร็จ: ' + (e?.message || ''), 'warning'); }
+      })(); }, []);
+
+      const available = (users || []).filter(u => !signers.some(s => normEmail(s.email) === normEmail(u.email)));
+      const addSigner = (email) => {
+        const u = (users || []).find(x => x.email === email); if (!u) return;
+        setSigners(s => [...s, { name: u.name || u.email.split('@')[0], email: u.email, role: u.dept || '' }]);
+        setPick('');
+      };
+      const move = (i, dir) => setSigners(s => { const a = [...s]; const j = i + dir; if (j < 0 || j >= a.length) return s; [a[i], a[j]] = [a[j], a[i]]; return a; });
+      const setRole = (i, v) => setSigners(s => s.map((x, k) => k === i ? { ...x, role: v } : x));
+      const rm = (i) => setSigners(s => s.filter((_, k) => k !== i));
+
+      const submit = async () => {
+        if (!title.trim()) { showToast('กรุณาใส่ชื่อเอกสาร', 'warning'); return; }
+        if (!mainFile) { showToast('กรุณาอัปโหลดไฟล์เอกสารหลัก', 'warning'); return; }
+        if (signers.length === 0) { showToast('กรุณาเลือกผู้เซ็นอย่างน้อย 1 คน', 'warning'); return; }
+        setBusy(true);
+        try {
+          if (!(await ensureAssigneesRegistered(signers.map(s => s.email), showToast))) { setBusy(false); return; }
+          const main = await uploadDocFile(mainFile);
+          const atts = [];
+          for (const f of attachFiles) atts.push(await uploadDocFile(f));
+          const approvers = signers.map((s, i) => ({ id:'s' + (i + 1), name:s.name, email:s.email, role:s.role || '', sequence:i + 1, status:i === 0 ? 'pending' : 'waiting', signedAt:null, ip:null, signature_data:null, comment:'' }));
+          const row = await createDocument({ title:title.trim(), doc_number:docNo.trim() || null, category:category || null, description:desc.trim() || null, main_file:main, attachments:atts, approvers, status:'pending', current_seq:1 });
+          showToast('อัปโหลดเอกสาร + ส่งเซ็นเรียบร้อย', 'success');
+          onCreated(row);
+        } catch (e) { showToast('สร้างเอกสารไม่สำเร็จ: ' + (e?.message || ''), 'warning'); setBusy(false); }
+      };
+
+      return (
+        <Modal title="＋ อัปโหลดเอกสารใหม่" subtitle="เลือกผู้เซ็นตามลำดับ · แนบไฟล์ประกอบได้" onClose={onClose} wide>
+          <div className="space-y-3">
+            <div className="grid sm:grid-cols-2 gap-3">
+              <div><label className="text-[11px] text-slate-500">ชื่อเอกสาร *</label>
+                <input value={title} onChange={e => setTitle(e.target.value)} className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 mt-0.5" placeholder="เช่น สัญญาจ้างงาน — นายสมชาย" /></div>
+              <div><label className="text-[11px] text-slate-500">เลขที่เอกสาร</label>
+                <input value={docNo} onChange={e => setDocNo(e.target.value)} className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 mt-0.5" placeholder="(ถ้ามี)" /></div>
+            </div>
+            <div><label className="text-[11px] text-slate-500">ประเภทเอกสาร</label>
+              <input list="doc-cat-list" value={category} onChange={e => setCategory(e.target.value)} className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 mt-0.5" placeholder="เลือกหรือพิมพ์เอง" />
+              <datalist id="doc-cat-list">{DOC_CATEGORIES.map(c => <option key={c} value={c} />)}</datalist></div>
+            <div><label className="text-[11px] text-slate-500">รายละเอียดประกอบ</label>
+              <textarea value={desc} onChange={e => setDesc(e.target.value)} rows={3} className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 mt-0.5" placeholder="บริบท/รายละเอียดของเอกสารที่ส่งเซ็น" /></div>
+
+            <div className="grid sm:grid-cols-2 gap-3">
+              <div><label className="text-[11px] text-slate-500">ไฟล์เอกสารหลัก *</label>
+                <input type="file" onChange={e => setMainFile(e.target.files?.[0] || null)} className="w-full text-xs mt-1" />
+                {mainFile && <div className="text-[11px] text-emerald-700 mt-1">✓ {mainFile.name}</div>}</div>
+              <div><label className="text-[11px] text-slate-500">ไฟล์ประกอบ (แนบได้หลายไฟล์)</label>
+                <input type="file" multiple onChange={e => setAttachFiles(a => [...a, ...Array.from(e.target.files || [])])} className="w-full text-xs mt-1" />
+                {attachFiles.length > 0 && <div className="text-[11px] text-slate-600 mt-1 space-y-0.5">{attachFiles.map((f, i) => <div key={i} className="flex items-center gap-1">📎 {f.name} <button onClick={() => setAttachFiles(a => a.filter((_, k) => k !== i))} className="text-rose-500">✕</button></div>)}</div>}</div>
+            </div>
+
+            {/* ผู้เซ็นตามลำดับ */}
+            <div className="border border-slate-200 rounded-xl p-3">
+              <label className="text-[11px] font-semibold text-slate-600">ผู้เซ็นตามลำดับ * (เซ็นทีละคนจากบนลงล่าง)</label>
+              {users === null ? <div className="text-xs text-slate-400 py-2">กำลังโหลดรายชื่อผู้ใช้…</div>
+                : users.length === 0 ? <div className="text-xs text-amber-700 py-2">⚠️ ยังไม่มีผู้ใช้ในระบบ — สร้างผู้ใช้ก่อนที่เมนู "ผู้ใช้ & รหัสผ่าน"</div>
+                : <>
+                  <div className="flex gap-2 mt-1.5">
+                    <select value={pick} onChange={e => { setPick(e.target.value); if (e.target.value) addSigner(e.target.value); }} className="flex-1 text-sm border border-slate-200 rounded-lg px-2 py-2 bg-white">
+                      <option value="">+ เพิ่มผู้เซ็น (เลือกจากผู้ใช้)…</option>
+                      {available.map(u => <option key={u.id || u.email} value={u.email}>{u.name || u.email} ({u.email})</option>)}
+                    </select>
+                  </div>
+                  {signers.length > 0 && <div className="space-y-1.5 mt-2">
+                    {signers.map((s, i) => (
+                      <div key={i} className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-lg p-2">
+                        <span className="w-5 h-5 shrink-0 rounded-full bg-slate-800 text-white text-[10px] flex items-center justify-center font-semibold">{i + 1}</span>
+                        <div className="flex-1 min-w-0">
+                          <div className="text-sm text-slate-800 truncate">{s.name} <span className="text-[10px] text-slate-400">{s.email}</span></div>
+                          <input value={s.role} onChange={e => setRole(i, e.target.value)} placeholder="ตำแหน่ง/บทบาท (เช่น หัวหน้าแผนก)" className="w-full text-[11px] border border-slate-200 rounded px-2 py-1 mt-1 bg-white" />
+                        </div>
+                        <div className="flex flex-col">
+                          <button onClick={() => move(i, -1)} disabled={i === 0} className="text-slate-400 hover:text-slate-700 disabled:opacity-30 text-xs leading-none">▲</button>
+                          <button onClick={() => move(i, 1)} disabled={i === signers.length - 1} className="text-slate-400 hover:text-slate-700 disabled:opacity-30 text-xs leading-none">▼</button>
+                        </div>
+                        <button onClick={() => rm(i)} className="text-rose-500 hover:text-rose-700 text-sm">✕</button>
+                      </div>
+                    ))}
+                  </div>}
+                </>}
+            </div>
+
+            <div className="flex justify-end gap-2 pt-1">
+              <button onClick={onClose} className="text-sm text-slate-600 px-4 py-2">ยกเลิก</button>
+              <button onClick={submit} disabled={busy} className="bg-slate-900 hover:bg-slate-800 text-white text-sm font-medium px-5 py-2 rounded-lg disabled:opacity-50 ibtn">{busy ? 'กำลังอัปโหลด…' : '✓ อัปโหลด + ส่งเซ็น'}</button>
+            </div>
+          </div>
+        </Modal>
       );
     }
 

@@ -100,6 +100,33 @@ async function updateAtsCandidate(id, patch){ const i=_atsCandidates.findIndex(c
 async function deleteAtsCandidate(id){ const i=_atsCandidates.findIndex(c=>c.id===id); if(i>=0) _atsCandidates.splice(i,1); }
 async function uploadResume(file){ return { path:'ats/demo_'+(file&&file.name||'resume.pdf'), name:file&&file.name||'resume.pdf', size:file&&file.size||10000, uploadedAt:_nowIso(), uploadedBy:getActor() }; }
 
+/* ----- Documents · เซ็นเอกสารออนไลน์ (mock) ----- */
+function getActorEmail(){ return (_session&&_session.user&&_session.user.email||'').toLowerCase(); }
+const _documents = [
+  { id:'d1', doc_number:'HR-2026-001', title:'สัญญาจ้างงาน — นายสมชาย ใจดี', category:'สัญญาจ้างงาน', description:'สัญญาจ้างพนักงานตำแหน่ง Barista เริ่มงาน 1 ก.ค. 2026 · แนบใบสมัคร + สำเนาบัตรประชาชน',
+    main_file:{ path:'documents/demo_contract.pdf', name:'contract_somchai.pdf', size:180000, uploadedAt:_nowIso(), uploadedBy:'HR01' },
+    attachments:[{ path:'documents/demo_idcard.pdf', name:'idcard_somchai.pdf', size:90000 },{ path:'documents/demo_app.pdf', name:'application_form.pdf', size:120000 }],
+    approvers:[
+      { id:'s1', name:'HR01 (Admin L2)', email:'hr01@demo.local', role:'HR Manager', sequence:1, status:'pending', signedAt:null, ip:null, signature_data:null, comment:'' },
+      { id:'s2', name:'คุณวิทยา รักดี', email:'wittaya@demo.local', role:'Operations Director', sequence:2, status:'waiting', signedAt:null, ip:null, signature_data:null, comment:'' } ],
+    status:'pending', current_seq:1, created_by:'HR01', created_at:_nowIso() },
+  { id:'d2', doc_number:'HR-2026-002', title:'หนังสือรับรองเงินเดือน — น.ส.อารยา ตั้งใจ', category:'หนังสือรับรอง', description:'ออกให้เพื่อยื่นกู้ธนาคาร',
+    main_file:{ path:'documents/demo_cert.pdf', name:'salary_cert.pdf', size:80000, uploadedAt:_nowIso(), uploadedBy:'HR01' }, attachments:[],
+    approvers:[
+      { id:'s1', name:'คุณวิทยา รักดี', email:'wittaya@demo.local', role:'หัวหน้าต้นสังกัด', sequence:1, status:'approved', signedAt:'2026-06-28T09:00:00Z', ip:'110.78.5.x', signature_data:null, comment:'อนุมัติ' },
+      { id:'s2', name:'HR01 (Admin L2)', email:'hr01@demo.local', role:'HR Manager', sequence:2, status:'pending', signedAt:null, ip:null, signature_data:null, comment:'' } ],
+    status:'pending', current_seq:2, created_by:'HR02', created_at:_nowIso() },
+  { id:'d3', doc_number:'HR-2026-000', title:'NDA — พนักงานใหม่ (เดโม เซ็นครบแล้ว)', category:'NDA / รักษาความลับ', description:'ตัวอย่างเอกสารที่เซ็นครบทุกคนแล้ว',
+    main_file:{ path:'documents/demo_nda.pdf', name:'nda.pdf', size:60000, uploadedAt:_nowIso(), uploadedBy:'HR01' }, attachments:[],
+    approvers:[ { id:'s1', name:'HR01 (Admin L2)', email:'hr01@demo.local', role:'HR', sequence:1, status:'approved', signedAt:'2026-06-20T10:00:00Z', ip:'127.0.0.1', signature_data:null, comment:'' } ],
+    status:'completed', current_seq:1, created_by:'HR01', created_at:_nowIso() },
+];
+async function listDocuments(){ return _documents.map(d=>JSON.parse(JSON.stringify(d))); }
+async function createDocument(p){ const r={ id:'d'+(++_seq), created_at:_nowIso(), created_by:getActor(), updated_by:getActor(), ...p }; _documents.unshift(r); return JSON.parse(JSON.stringify(r)); }
+async function updateDocument(id, patch){ const i=_documents.findIndex(d=>d.id===id); if(i>=0) _documents[i]={ ..._documents[i], ...patch, id, updated_by:getActor(), updated_at:_nowIso() }; return JSON.parse(JSON.stringify(_documents[i])); }
+async function deleteDocument(id){ const i=_documents.findIndex(d=>d.id===id); if(i>=0) _documents.splice(i,1); }
+async function uploadDocFile(file){ return { path:'documents/demo_'+(file&&file.name||'file.pdf'), name:file&&file.name||'file.pdf', size:file&&file.size||10000, type:file&&file.type||'', uploadedAt:_nowIso(), uploadedBy:getActor() }; }
+
 /* ----- Branch Sales (mock) ----- */
 const _branchSales = { 'Central Lardprao': 850000, 'สาขา 1': 620000, 'สาขา 2': 540000, 'สาขา 3': 410000 };
 async function listBranchSales(){ return Object.entries(_branchSales).map(function(e){ return { branch:e[0], sales:e[1] }; }); }
