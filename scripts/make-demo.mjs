@@ -40,7 +40,15 @@ async function createCandidate(row){ const r = { id:'c'+(++_seq), ...row }; _row
 async function updateCandidate(id, patch){ const i=_rows.findIndex(r=>r.id===id); if(i>=0){ _rows[i] = { ..._rows[i], ...patch, id }; } return _rows[i]; }
 async function deleteCandidate(id){ const i=_rows.findIndex(r=>r.id===id); if(i>=0) _rows.splice(i,1); }
 function subscribeCandidates(_cb){ return () => {}; }
-async function signIn(u){ const lv = /view|^l1|readonly/i.test(String(u)) ? 1 : 2; _session = { user:{ email:(String(u).includes('@')?String(u):String(u)+'@demo.local').toLowerCase(), app_metadata:{ role:'admin', level:lv }, user_metadata:{ name:String(u) } } }; if(_authCb) _authCb(_session); return _session; }
+async function signIn(u){
+  const s = String(u); const email = (s.includes('@')?s:s+'@demo.local').toLowerCase();
+  const known = _users.find(x=>x.email===email);
+  // role: ถ้าตรงกับ user ที่รู้จักใช้ role นั้น · ไม่งั้นเดาจาก username (app/user/sign/emp = ผู้ใช้งาน)
+  const role = known ? known.role : (/^(app|user|sign|emp)/i.test(s) ? 'user' : 'admin');
+  const lv = known ? known.level : (/view|^l1|readonly/i.test(s) ? 1 : 2);
+  _session = { user:{ email, app_metadata:{ role, level:lv }, user_metadata:{ name: known?known.name:s } } };
+  if(_authCb) _authCb(_session); return _session;
+}
 async function signOut(){ _session = null; if(_authCb) _authCb(null); }
 async function getSession(){ return _session; }
 function onAuthChange(cb){ _authCb = cb; return () => { _authCb = null; }; }
@@ -120,6 +128,10 @@ const _documents = [
     main_file:{ path:'documents/demo_nda.pdf', name:'nda.pdf', size:60000, uploadedAt:_nowIso(), uploadedBy:'HR01' }, attachments:[],
     approvers:[ { id:'s1', name:'HR01 (Admin L2)', email:'hr01@demo.local', role:'HR', sequence:1, status:'approved', signedAt:'2026-06-20T10:00:00Z', ip:'127.0.0.1', signature_data:null, comment:'' } ],
     status:'completed', current_seq:1, created_by:'HR01', created_at:_nowIso() },
+  { id:'d4', doc_number:'DOC-2026-004', title:'บันทึกขออนุมัติจัดซื้ออุปกรณ์สาขา', category:'บันทึกข้อความ (Memo)', description:'ขออนุมัติจัดซื้อเครื่องชงชา 2 เครื่องสำหรับสาขาใหม่ · แนบใบเสนอราคา',
+    main_file:{ path:'documents/demo_memo.pdf', name:'memo_purchase.pdf', size:70000, uploadedAt:_nowIso(), uploadedBy:'HR01' }, attachments:[{ path:'documents/demo_quote.pdf', name:'quotation.pdf', size:50000 }],
+    approvers:[ { id:'s1', name:'คุณวิทยา รักดี', email:'wittaya@demo.local', role:'Operations Director', sequence:1, status:'pending', signedAt:null, ip:null, signature_data:null, comment:'' } ],
+    status:'pending', current_seq:1, created_by:'HR01', created_at:_nowIso() },
 ];
 async function listDocuments(){ return _documents.map(d=>JSON.parse(JSON.stringify(d))); }
 async function createDocument(p){ const r={ id:'d'+(++_seq), created_at:_nowIso(), created_by:getActor(), updated_by:getActor(), ...p }; _documents.unshift(r); return JSON.parse(JSON.stringify(r)); }

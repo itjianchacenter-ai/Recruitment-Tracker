@@ -5249,6 +5249,32 @@ ${HR_EMAIL}`;
 
       const active = tasks.find(t => t.id === activeId) || null;
 
+      // ----- เอกสารเซ็นออนไลน์ (จากเมนู Document ฝั่ง HR) ที่มอบหมายมาที่อีเมลนี้ -----
+      const [docs, setDocs] = useState([]);
+      const [openDoc, setOpenDoc] = useState(null);
+      useEffect(() => { (async () => { try { setDocs(await listDocuments()); } catch (_) { /* ตาราง documents อาจยังไม่ถูกสร้าง */ } })(); }, []);
+      const curSignerDoc = (d) => (d.approvers || []).find(a => a.status === 'pending');
+      const isMyTurnDoc = (d) => { const c = curSignerDoc(d); return d.status === 'pending' && c && normEmail(c.email) === normEmail(myEmail); };
+      const iAmSignerDoc = (d) => (d.approvers || []).some(a => normEmail(a.email) === normEmail(myEmail));
+      const progressDoc = (d) => { const t = (d.approvers || []).length; const s = (d.approvers || []).filter(a => a.status === 'approved').length; return `${s}/${t}`; };
+      const openDocFile = async (f) => { if (!f?.path) return; try { window.open(await getSignedUrl(f.path), '_blank'); } catch (e) { showToast('เปิดไฟล์ไม่สำเร็จ: ' + (e?.message || ''), 'warning'); } };
+      const signDocA = async (d, sig, comment) => {
+        const ip = await getClientIp();
+        const patch = computeDocSign(d, myEmail, ip, sig, comment);
+        if (!patch) { showToast('ไม่ใช่คิวของคุณ', 'warning'); return; }
+        try { const row = await updateDocument(d.id, patch); setDocs(ds => ds.map(x => x.id === d.id ? row : x)); setOpenDoc(null); showToast(patch.status === 'completed' ? '✓ ลงนามครบทุกคนแล้ว · เอกสารสมบูรณ์' : '✓ ลงนามเรียบร้อย · ส่งต่อคิวถัดไป', 'success'); }
+        catch (e) { showToast('บันทึกลายเซ็นไม่สำเร็จ: ' + (e?.message || ''), 'warning'); }
+      };
+      const rejectDocA = async (d, comment) => {
+        const ip = await getClientIp();
+        const patch = computeDocReject(d, myEmail, ip, comment);
+        if (!patch) return;
+        try { const row = await updateDocument(d.id, patch); setDocs(ds => ds.map(x => x.id === d.id ? row : x)); setOpenDoc(null); showToast('ปฏิเสธเอกสารแล้ว', 'warning'); }
+        catch (e) { showToast('บันทึกไม่สำเร็จ: ' + (e?.message || ''), 'warning'); }
+      };
+      const myDocsTodo = docs.filter(isMyTurnDoc);
+      const myDocsOther = docs.filter(d => !isMyTurnDoc(d) && iAmSignerDoc(d));
+
       const backToList = () => {
         setActiveId(null); setSignature(null); setSignComment(''); setRejectMode(false);
         setRejectReason(''); setShowForm(false); setShowDoc(false); setVerdicts({});
@@ -5390,13 +5416,37 @@ ${HR_EMAIL}`;
                 <p className="text-xs text-slate-500 mt-1">{myName} · {myEmail} · งานที่ถูกมอบหมายให้คุณโดยตรง</p>
               </div>
 
-              {tasks.length === 0 && (
+              {/* เอกสารรอเซ็น (จากเมนู Document ฝั่ง HR) */}
+              {myDocsTodo.length > 0 && (
+                <div className="mb-4">
+                  <div className="text-xs font-semibold text-amber-700 mb-2">✍️ เอกสารรอเซ็น ({myDocsTodo.length})</div>
+                  <div className="space-y-2">
+                    {myDocsTodo.map(d => (
+                      <button key={d.id} onClick={() => setOpenDoc(d)} className="text-left w-full bg-white border border-amber-300 ring-1 ring-amber-200 rounded-xl p-3.5 hover:shadow-sm ibtn">
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="min-w-0">
+                            <div className="font-medium text-slate-900 text-sm truncate">✍️ {d.title}</div>
+                            <div className="text-[11px] text-slate-400 mt-0.5">{d.doc_number ? d.doc_number + ' · ' : ''}{d.category || 'เอกสาร'} · เซ็นแล้ว {progressDoc(d)} คน{(d.attachments || []).length ? ` · 📎 ${(d.attachments || []).length}` : ''}</div>
+                          </div>
+                          <span className="shrink-0 text-[10px] px-2 py-0.5 rounded-full border bg-amber-100 text-amber-800 border-amber-200">ถึงคิวคุณ</span>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {tasks.length === 0 && myDocsTodo.length === 0 && myDocsOther.length === 0 && (
                 <div className="bg-white border border-slate-200 rounded-2xl p-10 text-center">
                   <div className="text-5xl mb-3">✅</div>
                   <div className="text-sm font-medium text-slate-700">ยังไม่มีงานที่มอบหมายให้คุณ</div>
-                  <div className="text-xs text-slate-400 mt-1">เมื่อ HR มอบหมายงานอนุมัติ/ประเมินมาที่อีเมลนี้ จะแสดงที่นี่</div>
+                  <div className="text-xs text-slate-400 mt-1">เมื่อ HR มอบหมายงานอนุมัติ/ประเมิน/เซ็นเอกสารมาที่อีเมลนี้ จะแสดงที่นี่</div>
                 </div>
               )}
+
+              {openDoc && <DocDetailModal d={docs.find(x => x.id === openDoc.id) || openDoc} onClose={() => setOpenDoc(null)}
+                myEmail={myEmail} isMyTurn={isMyTurnDoc} currentSigner={curSignerDoc}
+                openFile={openDocFile} onSign={signDocA} onReject={rejectDocA} onRemove={() => {}} progress={progressDoc} />}
 
               {todo.length > 0 && (
                 <div className="mb-4">
@@ -6703,6 +6753,28 @@ ${HR_EMAIL}`;
     };
     const normEmail = (e) => usernameToEmail(String(e || '')).toLowerCase();
 
+    // คำนวณ patch หลังผู้เซ็น (myEmail) ลงนาม — advance คิวถัดไป/ปิดงาน · คืน null ถ้าไม่ใช่คิวเขา
+    function computeDocSign(d, myEmail, ip, signatureDataUrl, comment) {
+      const me = normEmail(myEmail);
+      const approvers = (d.approvers || []).map(a => ({ ...a }));
+      const i = approvers.findIndex(a => normEmail(a.email) === me && a.status === 'pending');
+      if (i < 0) return null;
+      approvers[i] = { ...approvers[i], status:'approved', signedAt:new Date().toISOString(), ip, signature_data:signatureDataUrl, comment:(comment || '').trim() };
+      let status = d.status, current_seq = d.current_seq;
+      const nextIdx = approvers.findIndex(a => a.status === 'waiting');
+      if (nextIdx >= 0) { approvers[nextIdx] = { ...approvers[nextIdx], status:'pending' }; current_seq = approvers[nextIdx].sequence; status = 'pending'; }
+      else { status = 'completed'; }
+      return { approvers, status, current_seq };
+    }
+    function computeDocReject(d, myEmail, ip, comment) {
+      const me = normEmail(myEmail);
+      const approvers = (d.approvers || []).map(a => ({ ...a }));
+      const i = approvers.findIndex(a => normEmail(a.email) === me && a.status === 'pending');
+      if (i < 0) return null;
+      approvers[i] = { ...approvers[i], status:'rejected', signedAt:new Date().toISOString(), ip, comment:(comment || '').trim() };
+      return { approvers, status:'rejected' };
+    }
+
     function DocumentView({ me }) {
       const myEmail = normEmail(me?.email || '');
       const [docs, setDocs] = useState(null);   // null = loading
@@ -6729,31 +6801,23 @@ ${HR_EMAIL}`;
 
       const applyRow = (row) => setDocs(ds => ds.map(d => d.id === row.id ? row : d));
 
-      // ----- ลงนาม / ปฏิเสธ (ใช้ลำดับเดียวกับงานสรรหา) -----
+      // ----- ลงนาม / ปฏิเสธ (ใช้ลำดับเดียวกับงานสรรหา · ผ่าน helper ร่วม) -----
       const signDoc = async (d, signatureDataUrl, comment) => {
         const ip = await getClientIp();
-        const approvers = (d.approvers || []).map(a => ({ ...a }));
-        const i = approvers.findIndex(a => normEmail(a.email) === myEmail && a.status === 'pending');
-        if (i < 0) { showToast('ไม่ใช่คิวของคุณ', 'warning'); return; }
-        approvers[i] = { ...approvers[i], status:'approved', signedAt:new Date().toISOString(), ip, signature_data:signatureDataUrl, comment:(comment || '').trim() };
-        let status = d.status, current_seq = d.current_seq;
-        const nextIdx = approvers.findIndex(a => a.status === 'waiting');
-        if (nextIdx >= 0) { approvers[nextIdx] = { ...approvers[nextIdx], status:'pending' }; current_seq = approvers[nextIdx].sequence; status = 'pending'; }
-        else { status = 'completed'; }
+        const patch = computeDocSign(d, myEmail, ip, signatureDataUrl, comment);
+        if (!patch) { showToast('ไม่ใช่คิวของคุณ', 'warning'); return; }
         try {
-          const row = await updateDocument(d.id, { approvers, status, current_seq });
+          const row = await updateDocument(d.id, patch);
           applyRow(row); setOpenDoc(null);
-          showToast(status === 'completed' ? '✓ ลงนามครบทุกคนแล้ว · เอกสารสมบูรณ์' : '✓ ลงนามเรียบร้อย · ส่งต่อคิวถัดไป', 'success');
+          showToast(patch.status === 'completed' ? '✓ ลงนามครบทุกคนแล้ว · เอกสารสมบูรณ์' : '✓ ลงนามเรียบร้อย · ส่งต่อคิวถัดไป', 'success');
         } catch (e) { showToast('บันทึกลายเซ็นไม่สำเร็จ: ' + (e?.message || ''), 'warning'); }
       };
       const rejectDoc = async (d, comment) => {
         const ip = await getClientIp();
-        const approvers = (d.approvers || []).map(a => ({ ...a }));
-        const i = approvers.findIndex(a => normEmail(a.email) === myEmail && a.status === 'pending');
-        if (i < 0) return;
-        approvers[i] = { ...approvers[i], status:'rejected', signedAt:new Date().toISOString(), ip, comment:(comment || '').trim() };
+        const patch = computeDocReject(d, myEmail, ip, comment);
+        if (!patch) return;
         try {
-          const row = await updateDocument(d.id, { approvers, status:'rejected' });
+          const row = await updateDocument(d.id, patch);
           applyRow(row); setOpenDoc(null);
           showToast('ปฏิเสธเอกสารแล้ว', 'warning');
         } catch (e) { showToast('บันทึกไม่สำเร็จ: ' + (e?.message || ''), 'warning'); }
@@ -6941,21 +7005,19 @@ ${HR_EMAIL}`;
       const [desc, setDesc] = useState('');
       const [mainFile, setMainFile] = useState(null);
       const [attachFiles, setAttachFiles] = useState([]);
-      const [users, setUsers] = useState(null);
       const [signers, setSigners] = useState([]);   // [{name,email,role}]
       const [busy, setBusy] = useState(false);
-      const [pick, setPick] = useState('');
+      const [nName, setNName] = useState('');
+      const [nEmail, setNEmail] = useState('');
+      const [nRole, setNRole] = useState('');
 
-      useEffect(() => { (async () => {
-        try { setUsers(await adminListUsers()); }
-        catch (e) { setUsers([]); showToast('โหลดรายชื่อผู้ใช้ไม่สำเร็จ: ' + (e?.message || ''), 'warning'); }
-      })(); }, []);
-
-      const available = (users || []).filter(u => !signers.some(s => normEmail(s.email) === normEmail(u.email)));
-      const addSigner = (email) => {
-        const u = (users || []).find(x => x.email === email); if (!u) return;
-        setSigners(s => [...s, { name: u.name || u.email.split('@')[0], email: u.email, role: u.dept || '' }]);
-        setPick('');
+      const addSigner = () => {
+        const name = nName.trim(), email = nEmail.trim();
+        if (!name || !email) { showToast('กรอกชื่อ + อีเมลของผู้เซ็นก่อน', 'warning'); return; }
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) && !/^[^\s@]+$/.test(email)) { showToast('อีเมลไม่ถูกต้อง', 'warning'); return; }
+        if (signers.some(s => normEmail(s.email) === normEmail(email))) { showToast('ผู้เซ็นคนนี้อยู่ในรายการแล้ว', 'warning'); return; }
+        setSigners(s => [...s, { name, email, role: nRole.trim() }]);
+        setNName(''); setNEmail(''); setNRole('');
       };
       const move = (i, dir) => setSigners(s => { const a = [...s]; const j = i + dir; if (j < 0 || j >= a.length) return s; [a[i], a[j]] = [a[j], a[i]]; return a; });
       const setRole = (i, v) => setSigners(s => s.map((x, k) => k === i ? { ...x, role: v } : x));
@@ -7002,35 +7064,32 @@ ${HR_EMAIL}`;
                 {attachFiles.length > 0 && <div className="text-[11px] text-slate-600 mt-1 space-y-0.5">{attachFiles.map((f, i) => <div key={i} className="flex items-center gap-1">📎 {f.name} <button onClick={() => setAttachFiles(a => a.filter((_, k) => k !== i))} className="text-rose-500">✕</button></div>)}</div>}</div>
             </div>
 
-            {/* ผู้เซ็นตามลำดับ */}
+            {/* ผู้เซ็นตามลำดับ — กรอกชื่อ + อีเมล (User) ของคนที่ต้องเซ็น */}
             <div className="border border-slate-200 rounded-xl p-3">
               <label className="text-[11px] font-semibold text-slate-600">ผู้เซ็นตามลำดับ * (เซ็นทีละคนจากบนลงล่าง)</label>
-              {users === null ? <div className="text-xs text-slate-400 py-2">กำลังโหลดรายชื่อผู้ใช้…</div>
-                : users.length === 0 ? <div className="text-xs text-amber-700 py-2">⚠️ ยังไม่มีผู้ใช้ในระบบ — สร้างผู้ใช้ก่อนที่เมนู "ผู้ใช้ & รหัสผ่าน"</div>
-                : <>
-                  <div className="flex gap-2 mt-1.5">
-                    <select value={pick} onChange={e => { setPick(e.target.value); if (e.target.value) addSigner(e.target.value); }} className="flex-1 text-sm border border-slate-200 rounded-lg px-2 py-2 bg-white">
-                      <option value="">+ เพิ่มผู้เซ็น (เลือกจากผู้ใช้)…</option>
-                      {available.map(u => <option key={u.id || u.email} value={u.email}>{u.name || u.email} ({u.email})</option>)}
-                    </select>
+              <div className="text-[10px] text-slate-400 mb-2">กรอกชื่อ + อีเมล <b>บัญชีผู้ใช้ (User)</b> ของคนที่ต้องเซ็น — เอกสารจะไปโผล่ใน "งานของฉัน" ของบัญชีนั้น</div>
+              <div className="grid grid-cols-1 sm:grid-cols-[1fr_1fr_auto] gap-2">
+                <input value={nName} onChange={e => setNName(e.target.value)} placeholder="ชื่อผู้เซ็น" className="text-sm border border-slate-200 rounded-lg px-2.5 py-2" />
+                <input value={nEmail} onChange={e => setNEmail(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addSigner(); } }} placeholder="อีเมล User (เช่น somchai@…)" className="text-sm border border-slate-200 rounded-lg px-2.5 py-2" />
+                <button type="button" onClick={addSigner} className="bg-slate-800 hover:bg-slate-900 text-white text-sm px-3 py-2 rounded-lg ibtn whitespace-nowrap">+ เพิ่ม</button>
+              </div>
+              <input value={nRole} onChange={e => setNRole(e.target.value)} placeholder="ตำแหน่ง/บทบาท (ไม่บังคับ · เช่น หัวหน้าแผนก)" className="w-full text-xs border border-slate-200 rounded-lg px-2.5 py-1.5 mt-2" />
+              {signers.length > 0 && <div className="space-y-1.5 mt-2.5">
+                {signers.map((s, i) => (
+                  <div key={i} className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-lg p-2">
+                    <span className="w-5 h-5 shrink-0 rounded-full bg-slate-800 text-white text-[10px] flex items-center justify-center font-semibold">{i + 1}</span>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm text-slate-800 truncate">{s.name} <span className="text-[10px] text-slate-400">{s.email}</span></div>
+                      <input value={s.role} onChange={e => setRole(i, e.target.value)} placeholder="ตำแหน่ง/บทบาท" className="w-full text-[11px] border border-slate-200 rounded px-2 py-1 mt-1 bg-white" />
+                    </div>
+                    <div className="flex flex-col">
+                      <button onClick={() => move(i, -1)} disabled={i === 0} className="text-slate-400 hover:text-slate-700 disabled:opacity-30 text-xs leading-none">▲</button>
+                      <button onClick={() => move(i, 1)} disabled={i === signers.length - 1} className="text-slate-400 hover:text-slate-700 disabled:opacity-30 text-xs leading-none">▼</button>
+                    </div>
+                    <button onClick={() => rm(i)} className="text-rose-500 hover:text-rose-700 text-sm">✕</button>
                   </div>
-                  {signers.length > 0 && <div className="space-y-1.5 mt-2">
-                    {signers.map((s, i) => (
-                      <div key={i} className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-lg p-2">
-                        <span className="w-5 h-5 shrink-0 rounded-full bg-slate-800 text-white text-[10px] flex items-center justify-center font-semibold">{i + 1}</span>
-                        <div className="flex-1 min-w-0">
-                          <div className="text-sm text-slate-800 truncate">{s.name} <span className="text-[10px] text-slate-400">{s.email}</span></div>
-                          <input value={s.role} onChange={e => setRole(i, e.target.value)} placeholder="ตำแหน่ง/บทบาท (เช่น หัวหน้าแผนก)" className="w-full text-[11px] border border-slate-200 rounded px-2 py-1 mt-1 bg-white" />
-                        </div>
-                        <div className="flex flex-col">
-                          <button onClick={() => move(i, -1)} disabled={i === 0} className="text-slate-400 hover:text-slate-700 disabled:opacity-30 text-xs leading-none">▲</button>
-                          <button onClick={() => move(i, 1)} disabled={i === signers.length - 1} className="text-slate-400 hover:text-slate-700 disabled:opacity-30 text-xs leading-none">▼</button>
-                        </div>
-                        <button onClick={() => rm(i)} className="text-rose-500 hover:text-rose-700 text-sm">✕</button>
-                      </div>
-                    ))}
-                  </div>}
-                </>}
+                ))}
+              </div>}
             </div>
 
             <div className="flex justify-end gap-2 pt-1">
