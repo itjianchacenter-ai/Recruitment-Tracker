@@ -6910,7 +6910,7 @@ ${HR_EMAIL}`;
           {openDoc && <DocDetailModal d={docs.find(x => x.id === openDoc.id) || openDoc} onClose={() => setOpenDoc(null)}
             myEmail={myEmail} isMyTurn={isMyTurn} currentSigner={currentSigner}
             openFile={openFile} onSign={signDoc} onReject={rejectDoc} onRemove={removeDoc} progress={progress} />}
-          {creating && <DocCreateModal initialDocNo={nextDocNo} onClose={() => setCreating(false)} onCreated={(row) => { setDocs(ds => [row, ...ds]); setCreating(false); }} />}
+          {creating && <DocCreateModal suggestDocNo={nextDocNo} catOptions={[...new Set([...DOC_CATEGORIES, ...docs.map(d => (d.category || '').trim()).filter(Boolean)])]} onClose={() => setCreating(false)} onCreated={(row) => { setDocs(ds => [row, ...ds]); setCreating(false); }} />}
         </div>
       );
     }
@@ -6998,9 +6998,9 @@ ${HR_EMAIL}`;
     }
 
     // ----- Modal: อัปโหลดเอกสารใหม่ + เลือกผู้เซ็นตามลำดับ -----
-    function DocCreateModal({ onClose, onCreated, initialDocNo }) {
+    function DocCreateModal({ onClose, onCreated, suggestDocNo, catOptions = [] }) {
       const [title, setTitle] = useState('');
-      const [docNo, setDocNo] = useState(initialDocNo || '');
+      const [docNo, setDocNo] = useState('');   // เริ่มว่าง · ไม่บังคับ (กดปุ่มออกเลขอัตโนมัติได้)
       const [category, setCategory] = useState('');
       const [desc, setDesc] = useState('');
       const [mainFile, setMainFile] = useState(null);
@@ -7046,12 +7046,15 @@ ${HR_EMAIL}`;
             <div className="grid sm:grid-cols-2 gap-3">
               <div><label className="text-[11px] text-slate-500">ชื่อเอกสาร *</label>
                 <input value={title} onChange={e => setTitle(e.target.value)} className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 mt-0.5" placeholder="เช่น สัญญาจ้างงาน — นายสมชาย" /></div>
-              <div><label className="text-[11px] text-slate-500">เลขที่เอกสาร <span className="text-slate-400">(อัตโนมัติ · แก้ได้)</span></label>
-                <input value={docNo} onChange={e => setDocNo(e.target.value)} className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 mt-0.5" placeholder="DOC-2026-001" /></div>
+              <div><label className="text-[11px] text-slate-500">เลขที่เอกสาร <span className="text-slate-400">(ไม่บังคับ)</span></label>
+                <div className="flex gap-1.5 mt-0.5">
+                  <input value={docNo} onChange={e => setDocNo(e.target.value)} className="flex-1 min-w-0 text-sm border border-slate-200 rounded-lg px-3 py-2" placeholder="เว้นว่างได้ · หรือกดออกเลขอัตโนมัติ →" />
+                  <button type="button" onClick={() => setDocNo(suggestDocNo || '')} title="ออกเลขอัตโนมัติ" className="shrink-0 text-xs text-slate-600 border border-slate-200 hover:border-slate-300 rounded-lg px-2.5 whitespace-nowrap ibtn">🔢 ออกเลข</button>
+                </div></div>
             </div>
-            <div><label className="text-[11px] text-slate-500">ประเภทเอกสาร</label>
-              <input list="doc-cat-list" value={category} onChange={e => setCategory(e.target.value)} className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 mt-0.5" placeholder="เลือกหรือพิมพ์เอง" />
-              <datalist id="doc-cat-list">{DOC_CATEGORIES.map(c => <option key={c} value={c} />)}</datalist></div>
+            <div><label className="text-[11px] text-slate-500">ประเภทเอกสาร <span className="text-slate-400">(เลือก หรือ พิมพ์ใหม่เองได้)</span></label>
+              <input list="doc-cat-list" value={category} onChange={e => setCategory(e.target.value)} className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 mt-0.5" placeholder="เลือกจากรายการ หรือพิมพ์ประเภทใหม่…" />
+              <datalist id="doc-cat-list">{catOptions.map(c => <option key={c} value={c} />)}</datalist></div>
             <div><label className="text-[11px] text-slate-500">รายละเอียดประกอบ</label>
               <textarea value={desc} onChange={e => setDesc(e.target.value)} rows={3} className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 mt-0.5" placeholder="บริบท/รายละเอียดของเอกสารที่ส่งเซ็น" /></div>
 
