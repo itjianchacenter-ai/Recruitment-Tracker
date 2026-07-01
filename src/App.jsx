@@ -6915,10 +6915,6 @@ ${HR_EMAIL}`;
 
       if (docs === null) return <div className="text-center text-slate-400 text-sm py-16">กำลังโหลด Document…</div>;
 
-      const inbox = docs.filter(isMyTurn);
-      const mineWaiting = docs.filter(d => !isMyTurn(d) && d.status === 'pending' && iAmSigner(d) && (d.approvers || []).some(a => normEmail(a.email) === myEmail && a.status === 'waiting'));
-      const mineDone = docs.filter(d => iAmSigner(d) && (d.approvers || []).some(a => normEmail(a.email) === myEmail && (a.status === 'approved' || a.status === 'rejected')));
-
       const progress = (d) => { const t = (d.approvers || []).length; const s = (d.approvers || []).filter(a => a.status === 'approved').length; return `${s}/${t}`; };
 
       // เลขที่เอกสารอัตโนมัติ · running number ต่อปี (ตรวจจากเลขเดิมทุก prefix)
@@ -6960,33 +6956,24 @@ ${HR_EMAIL}`;
 
           {err && <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-800">⚠️ ใช้งาน Document ไม่ได้: {err} · ตรวจว่ารัน <b>supabase/documents.sql</b> บน Supabase แล้ว</div>}
 
-          {/* งานของฉัน — เอกสารรอเซ็น */}
-          <div className="bg-amber-50/60 border border-amber-200 rounded-2xl p-4">
-            <div className="text-sm font-semibold text-amber-900 mb-2">📥 งานของฉัน — เอกสารรอเซ็น ({inbox.length})</div>
-            {inbox.length === 0
-              ? <div className="text-xs text-amber-700/70 py-2">ไม่มีเอกสารที่รอคุณเซ็นตอนนี้ 🎉</div>
-              : <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">{inbox.map(d => <DocCard key={d.id} d={d} highlight />)}</div>}
-            {mineWaiting.length > 0 && <div className="text-[11px] text-slate-500 mt-3">⏳ รอคิว (คนอื่นเซ็นก่อน): {mineWaiting.length} ฉบับ</div>}
-          </div>
+          <div className="text-[11px] text-slate-400 -mt-2">หน้าจัดการเอกสารฝั่ง HR · การลงนามทำในหน้า "งานของฉัน" ของบัญชีผู้เซ็นแต่ละคน</div>
 
-          {/* เอกสารทั้งหมด (แอดมิน) หรือ เอกสารที่ฉันเกี่ยวข้อง */}
+          {/* เอกสารทั้งหมด (หน้าจัดการ) */}
           <div>
             <div className="flex items-center justify-between gap-2 flex-wrap mb-2">
-              <div className="text-sm font-semibold text-slate-700">{canEdit() ? '📚 เอกสารทั้งหมด' : `📄 เอกสารที่ฉันเกี่ยวข้อง (${mineDone.length + inbox.length + mineWaiting.length})`}</div>
-              {canEdit() && <input value={q} onChange={e => setQ(e.target.value)} placeholder="🔍 ค้นหา ชื่อ / เลขที่ / ประเภท…" className="text-xs border border-slate-200 rounded-lg px-3 py-1.5 w-56 focus:outline-none focus:ring-2 focus:ring-slate-300" />}
+              <div className="text-sm font-semibold text-slate-700">📚 เอกสารทั้งหมด</div>
+              <input value={q} onChange={e => setQ(e.target.value)} placeholder="🔍 ค้นหา ชื่อ / เลขที่ / ประเภท…" className="text-xs border border-slate-200 rounded-lg px-3 py-1.5 w-56 focus:outline-none focus:ring-2 focus:ring-slate-300" />
             </div>
-            {canEdit() && <div className="flex items-center gap-1.5 flex-wrap mb-3">
+            <div className="flex items-center gap-1.5 flex-wrap mb-3">
               {[['','ทั้งหมด',statusCount.all],['pending','รอเซ็น',statusCount.pending],['completed','เสร็จ',statusCount.completed],['rejected','ปฏิเสธ',statusCount.rejected]].map(([v,label,n]) => (
                 <button key={v||'all'} onClick={() => setFStatus(v)} className={`text-xs px-3 py-1.5 rounded-lg border ibtn ${fStatus===v ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'}`}>{label} <span className="opacity-70">({n})</span></button>
               ))}
-            </div>}
+            </div>
             {(() => {
-              let list = canEdit() ? docs : [...inbox, ...mineWaiting, ...mineDone];
-              if (canEdit()) {
-                if (fStatus) list = list.filter(d => d.status === fStatus);
-                const kw = q.trim().toLowerCase();
-                if (kw) list = list.filter(d => [d.title, d.doc_number, d.category].some(x => (x || '').toLowerCase().includes(kw)));
-              }
+              let list = docs;
+              if (fStatus) list = list.filter(d => d.status === fStatus);
+              const kw = q.trim().toLowerCase();
+              if (kw) list = list.filter(d => [d.title, d.doc_number, d.category].some(x => (x || '').toLowerCase().includes(kw)));
               if (list.length === 0) return <div className="text-xs text-slate-400 py-3">{q || fStatus ? '— ไม่พบเอกสารตามเงื่อนไข —' : '— ยังไม่มีเอกสาร —'}</div>;
               return <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">{list.map(d => <DocCard key={d.id} d={d} />)}</div>;
             })()}
