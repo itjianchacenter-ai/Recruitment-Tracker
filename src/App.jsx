@@ -6980,17 +6980,34 @@ ${HR_EMAIL}`;
       const myTurn = isMyTurn(d);
       const cur = currentSigner(d);
       const [dling, setDling] = useState(false);
-      const canDownloadSigned = isPdfFile(d.main_file) && (d.approvers || []).some(a => a.status === 'approved' && a.box && a.signature_data);
+      // ดาวน์โหลด/พิมพ์ได้เมื่อเป็น PDF และ (เซ็นครบ หรือ มีลายเซ็นฝังตามช่องแล้ว)
+      const canProduceSigned = isPdfFile(d.main_file) && (d.status === 'completed' || (d.approvers || []).some(a => a.status === 'approved' && a.box && a.signature_data));
+      const buildSignedPdf = async () => {
+        const url = await getSignedUrl(d.main_file.path);
+        const buf = await (await fetch(url)).arrayBuffer();
+        return await pdfEmbedSignatures(buf, d.approvers || []);
+      };
       const downloadSigned = async () => {
         if (!d.main_file?.path) return;
         setDling(true);
         try {
-          const url = await getSignedUrl(d.main_file.path);
-          const buf = await (await fetch(url)).arrayBuffer();
-          const out = await pdfEmbedSignatures(buf, d.approvers || []);
+          const out = await buildSignedPdf();
           _downloadBytes(out, ((d.doc_number || d.title || 'document') + '_signed.pdf').replace(/[^\w.\-ก-๙]+/g, '_'));
           showToast('ดาวน์โหลด PDF ที่ลงนามแล้ว', 'success');
         } catch (e) { showToast('สร้าง PDF ลงนามไม่สำเร็จ: ' + (e?.message || ''), 'warning'); }
+        setDling(false);
+      };
+      const printSigned = async () => {
+        if (!d.main_file?.path) return;
+        setDling(true);
+        try {
+          const out = await buildSignedPdf();
+          const burl = URL.createObjectURL(new Blob([out], { type: 'application/pdf' }));
+          const w = window.open(burl, '_blank');
+          if (w) { w.onload = () => { try { w.focus(); w.print(); } catch (_) {} }; }
+          else { window.open(burl, '_blank'); }   // popup ถูกบล็อก → เปิดแท็บให้พิมพ์เอง
+          setTimeout(() => URL.revokeObjectURL(burl), 60000);
+        } catch (e) { showToast('เปิดเพื่อพิมพ์ไม่สำเร็จ: ' + (e?.message || ''), 'warning'); }
         setDling(false);
       };
 
@@ -7013,7 +7030,10 @@ ${HR_EMAIL}`;
               <div className="border border-slate-200 rounded-lg p-3">
                 <div className="text-[11px] font-semibold text-slate-500 mb-1.5">📄 เอกสารหลัก</div>
                 {d.main_file ? <button onClick={() => openFile(d.main_file)} className="text-sm text-indigo-600 hover:underline break-all text-left">{d.main_file.name}</button> : <span className="text-xs text-slate-400">—</span>}
-                {canDownloadSigned && <button onClick={downloadSigned} disabled={dling} className="mt-2 block text-xs bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-lg ibtn disabled:opacity-50">{dling ? 'กำลังสร้าง…' : '⬇ ดาวน์โหลด PDF ที่ลงนามแล้ว'}</button>}
+                {canProduceSigned && <div className="mt-2 flex flex-wrap gap-1.5">
+                  <button onClick={downloadSigned} disabled={dling} className="text-xs bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-lg ibtn disabled:opacity-50">{dling ? 'กำลังสร้าง…' : '⬇ ดาวน์โหลด PDF ลงนาม'}</button>
+                  <button onClick={printSigned} disabled={dling} className="text-xs bg-slate-700 hover:bg-slate-800 text-white px-3 py-1.5 rounded-lg ibtn disabled:opacity-50">🖨️ พิมพ์</button>
+                </div>}
               </div>
               <div className="border border-slate-200 rounded-lg p-3">
                 <div className="text-[11px] font-semibold text-slate-500 mb-1.5">📎 ไฟล์ประกอบ ({(d.attachments || []).length})</div>
