@@ -6788,6 +6788,35 @@ ${HR_EMAIL}`;
       const a = document.createElement('a'); a.href = url; a.download = filename; document.body.appendChild(a); a.click(); a.remove();
       setTimeout(() => URL.revokeObjectURL(url), 4000);
     }
+    // ตัดขอบว่าง (โปร่งใส/ขาว) รอบลายเซ็นออก → เหลือเฉพาะเส้นจริง เพื่อขยายเต็มกล่องได้พอดี
+    function _trimSignatureImage(dataUrl) {
+      return new Promise((resolve) => {
+        const img = new Image();
+        img.onload = () => {
+          try {
+            const c = document.createElement('canvas'); c.width = img.width; c.height = img.height;
+            const ctx = c.getContext('2d'); ctx.drawImage(img, 0, 0);
+            const px = ctx.getImageData(0, 0, c.width, c.height).data;
+            let minX = c.width, minY = c.height, maxX = -1, maxY = -1;
+            for (let y = 0; y < c.height; y++) for (let x = 0; x < c.width; x++) {
+              const i = (y * c.width + x) * 4;
+              const isInk = px[i + 3] > 25 && !(px[i] > 244 && px[i + 1] > 244 && px[i + 2] > 244);
+              if (isInk) { if (x < minX) minX = x; if (x > maxX) maxX = x; if (y < minY) minY = y; if (y > maxY) maxY = y; }
+            }
+            if (maxX < minX || maxY < minY) { resolve(dataUrl); return; }   // ว่างเปล่า
+            const pad = 3;
+            minX = Math.max(0, minX - pad); minY = Math.max(0, minY - pad);
+            maxX = Math.min(c.width - 1, maxX + pad); maxY = Math.min(c.height - 1, maxY + pad);
+            const w = maxX - minX + 1, h = maxY - minY + 1;
+            const oc = document.createElement('canvas'); oc.width = w; oc.height = h;
+            oc.getContext('2d').drawImage(c, minX, minY, w, h, 0, 0, w, h);
+            resolve(oc.toDataURL('image/png'));
+          } catch (_) { resolve(dataUrl); }
+        };
+        img.onerror = () => resolve(dataUrl);
+        img.src = dataUrl;
+      });
+    }
     const isPdfFile = (f) => f && (/\.pdf$/i.test(f.name || '') || /pdf/i.test(f.type || ''));
     // เรนเดอร์หน้า PDF -> [{dataUrl,w,h}] (สำหรับวางกล่องช่องเซ็น)
     async function pdfRenderPages(file, maxPages = 10) {
@@ -6819,11 +6848,11 @@ ${HR_EMAIL}`;
         const bx = a.box.x * pw, bw = a.box.w * pw, bh = a.box.h * ph;
         const by = ph * (1 - a.box.y - a.box.h);   // top-left (หน้าเว็บ) -> bottom-left (pdf)
         try {
-          const bytes = _dataUrlToBytes(a.signature_data);
-          const img = /^data:image\/jpe?g/i.test(a.signature_data) ? await doc.embedJpg(bytes) : await doc.embedPng(bytes);
-          const scale = Math.min(bw / img.width, bh / img.height);
-          const dw = img.width * scale, dh = img.height * scale;
-          pg.drawImage(img, { x: bx + (bw - dw) / 2, y: by + (bh - dh) / 2, width: dw, height: dh });
+          const src = await _trimSignatureImage(a.signature_data);   // ตัดขอบว่างก่อน
+          const bytes = _dataUrlToBytes(src);
+          const img = /^data:image\/jpe?g/i.test(src) ? await doc.embedJpg(bytes) : await doc.embedPng(bytes);
+          // ฝังเส้นลายเซ็น (หลังตัดขอบ) ให้เต็มพื้นที่กล่องช่องเซ็นพอดี
+          pg.drawImage(img, { x: bx, y: by, width: bw, height: bh });
         } catch (_) { /* ลายเซ็นฝังไม่ได้ ข้าม */ }
         // ไฟล์ PDF มีชื่อ+ตำแหน่งพิมพ์ในช่องอยู่แล้ว → ฝังเฉพาะรูปลายเซ็น + วันที่ (ASCII) มุมกล่อง
         try { const dt = a.signedAt ? new Date(a.signedAt).toISOString().slice(0, 10) : ''; if (dt) pg.drawText(dt, { x: bx, y: Math.max(by - 8, 2), size: 5, font, color: PL.rgb(0.4, 0.4, 0.4) }); } catch (_) {}
