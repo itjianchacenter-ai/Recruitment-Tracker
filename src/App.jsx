@@ -6792,7 +6792,9 @@ ${HR_EMAIL}`;
       const openEdit = (rec) => { setResignMode(false); setEdit({ rec: rec ? { ...rec } : { status:'active' }, isNew: !rec }); };
       const setF = (k, v) => setEdit(e => ({ ...e, rec: { ...e.rec, [k]: v } }));
       const closeEdit = () => { setEdit(null); setResignMode(false); };
-      const basePayload = (rec) => ({ kind, dept:rec.dept||null, position:rec.position||null, work_status:rec.work_status||null, emp_id:rec.emp_id||null, branch:rec.branch||null, nick:rec.nick||null, name:rec.name||null, name_en:rec.name_en||null, gender:(rec.gender||empGenderFromName(rec.name))||null, join_date:rec.join_date||null, birth_date:rec.birth_date||null, salary:(rec.salary||'').trim()||null, doc_status:rec.doc_status||null, remark:rec.remark||null });
+      // พนักงานทั่วไป (local) ไม่ส่ง kind/doc_status/remark — ไม่ต้องพึ่งคอลัมน์ใหม่
+      // (ลาออก/แก้ไขทำงานได้แม้ยังไม่ได้รัน migration) · ส่งเฉพาะตอนเป็น foreign
+      const basePayload = (rec) => ({ dept:rec.dept||null, position:rec.position||null, work_status:rec.work_status||null, emp_id:rec.emp_id||null, branch:rec.branch||null, nick:rec.nick||null, name:rec.name||null, name_en:rec.name_en||null, gender:(rec.gender||empGenderFromName(rec.name))||null, join_date:rec.join_date||null, birth_date:rec.birth_date||null, salary:(rec.salary||'').trim()||null, ...(isForeign ? { kind, doc_status:rec.doc_status||null, remark:rec.remark||null } : {}) });
       const saveEmp = async () => {
         setBusy(true);
         try {
