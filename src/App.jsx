@@ -7003,10 +7003,20 @@ ${HR_EMAIL}`;
         try {
           const out = await buildSignedPdf();
           const burl = URL.createObjectURL(new Blob([out], { type: 'application/pdf' }));
-          const w = window.open(burl, '_blank');
-          if (w) { w.onload = () => { try { w.focus(); w.print(); } catch (_) {} }; }
-          else { window.open(burl, '_blank'); }   // popup ถูกบล็อก → เปิดแท็บให้พิมพ์เอง
-          setTimeout(() => URL.revokeObjectURL(burl), 60000);
+          // พิมพ์ผ่าน iframe ซ่อน = พิมพ์ตัว PDF ตรงๆ คงขนาดหน้า+สีต้นฉบับ (ไม่ผ่าน HTML)
+          const old = document.getElementById('__docPrintFrame'); if (old) old.remove();
+          const frame = document.createElement('iframe');
+          frame.id = '__docPrintFrame';
+          frame.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0;';
+          frame.src = burl;
+          let printed = false;
+          frame.onload = () => { setTimeout(() => {
+            try { frame.contentWindow.focus(); frame.contentWindow.print(); printed = true; }
+            catch (_) { if (!printed) window.open(burl, '_blank'); }   // เบราว์เซอร์ไม่ให้พิมพ์ใน iframe → เปิดแท็บ
+          }, 500); };
+          document.body.appendChild(frame);
+          setTimeout(() => URL.revokeObjectURL(burl), 120000);
+          showToast('เปิดหน้าต่างพิมพ์ · ในกล่องพิมพ์เลือก "ขนาดจริง / 100%" (อย่าเลือก Fit) เพื่อให้ตรงขนาดเอกสารเดิม', 'info');
         } catch (e) { showToast('เปิดเพื่อพิมพ์ไม่สำเร็จ: ' + (e?.message || ''), 'warning'); }
         setDling(false);
       };
