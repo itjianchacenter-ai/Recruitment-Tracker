@@ -7,8 +7,14 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Thai:wght@400;500;600;700&display=swap" rel="stylesheet" />
     <title>Recruitment 120 Days · HR Tracker</title>
-    <script type="module" crossorigin src="/assets/index-CJW391Fu.js"></script>
-    <link rel="stylesheet" crossorigin href="/assets/index-MuP4KjfF.css">
+    <!-- PDF: pdf.js (แสดงหน้า PDF เพื่อวางช่องเซ็น) + pdf-lib (ฝังลายเซ็นลงไฟล์) -->
+    <script src="https://unpkg.com/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
+    <script src="https://unpkg.com/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
+    <script>
+      if (window.pdfjsLib) window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://unpkg.com/pdfjs-dist@3.11.174/build/pdf.worker.min.js';
+    </script>
+    <script type="module" crossorigin src="/assets/index-SMIZIm7m.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-hvA5XnYN.css">
   </head>
   <body>
     <div id="root"></div>
