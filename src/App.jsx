@@ -6709,6 +6709,8 @@ ${HR_EMAIL}`;
       const [err, setErr] = useState('');
       const [openDoc, setOpenDoc] = useState(null);
       const [creating, setCreating] = useState(false);
+      const [fStatus, setFStatus] = useState('');   // '' = ทั้งหมด · pending/completed/rejected
+      const [q, setQ] = useState('');
 
       useEffect(() => { (async () => {
         try { setDocs(await listDocuments()); }
@@ -6770,6 +6772,16 @@ ${HR_EMAIL}`;
 
       const progress = (d) => { const t = (d.approvers || []).length; const s = (d.approvers || []).filter(a => a.status === 'approved').length; return `${s}/${t}`; };
 
+      // เลขที่เอกสารอัตโนมัติ · running number ต่อปี (ตรวจจากเลขเดิมทุก prefix)
+      const year = new Date().getFullYear();
+      const nextDocNo = (() => {
+        const re = new RegExp('-' + year + '-(\\d+)\\s*$');
+        let max = 0;
+        docs.forEach(d => { const m = (d.doc_number || '').match(re); if (m) { const n = parseInt(m[1], 10); if (n > max) max = n; } });
+        return 'DOC-' + year + '-' + String(max + 1).padStart(3, '0');
+      })();
+      const statusCount = { all: docs.length, pending: docs.filter(d => d.status === 'pending').length, completed: docs.filter(d => d.status === 'completed').length, rejected: docs.filter(d => d.status === 'rejected').length };
+
       const DocCard = ({ d, highlight }) => {
         const badge = DOC_STATUS_BADGE[d.status] || DOC_STATUS_BADGE.pending;
         const cur = currentSigner(d);
@@ -6810,10 +6822,23 @@ ${HR_EMAIL}`;
 
           {/* เอกสารทั้งหมด (แอดมิน) หรือ เอกสารที่ฉันเกี่ยวข้อง */}
           <div>
-            <div className="text-sm font-semibold text-slate-700 mb-2">{canEdit() ? `📚 เอกสารทั้งหมด (${docs.length})` : `📄 เอกสารที่ฉันเกี่ยวข้อง (${mineDone.length + inbox.length + mineWaiting.length})`}</div>
+            <div className="flex items-center justify-between gap-2 flex-wrap mb-2">
+              <div className="text-sm font-semibold text-slate-700">{canEdit() ? '📚 เอกสารทั้งหมด' : `📄 เอกสารที่ฉันเกี่ยวข้อง (${mineDone.length + inbox.length + mineWaiting.length})`}</div>
+              {canEdit() && <input value={q} onChange={e => setQ(e.target.value)} placeholder="🔍 ค้นหา ชื่อ / เลขที่ / ประเภท…" className="text-xs border border-slate-200 rounded-lg px-3 py-1.5 w-56 focus:outline-none focus:ring-2 focus:ring-slate-300" />}
+            </div>
+            {canEdit() && <div className="flex items-center gap-1.5 flex-wrap mb-3">
+              {[['','ทั้งหมด',statusCount.all],['pending','รอเซ็น',statusCount.pending],['completed','เสร็จ',statusCount.completed],['rejected','ปฏิเสธ',statusCount.rejected]].map(([v,label,n]) => (
+                <button key={v||'all'} onClick={() => setFStatus(v)} className={`text-xs px-3 py-1.5 rounded-lg border ibtn ${fStatus===v ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'}`}>{label} <span className="opacity-70">({n})</span></button>
+              ))}
+            </div>}
             {(() => {
-              const list = canEdit() ? docs : [...inbox, ...mineWaiting, ...mineDone];
-              if (list.length === 0) return <div className="text-xs text-slate-400 py-3">— ยังไม่มีเอกสาร —</div>;
+              let list = canEdit() ? docs : [...inbox, ...mineWaiting, ...mineDone];
+              if (canEdit()) {
+                if (fStatus) list = list.filter(d => d.status === fStatus);
+                const kw = q.trim().toLowerCase();
+                if (kw) list = list.filter(d => [d.title, d.doc_number, d.category].some(x => (x || '').toLowerCase().includes(kw)));
+              }
+              if (list.length === 0) return <div className="text-xs text-slate-400 py-3">{q || fStatus ? '— ไม่พบเอกสารตามเงื่อนไข —' : '— ยังไม่มีเอกสาร —'}</div>;
               return <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">{list.map(d => <DocCard key={d.id} d={d} />)}</div>;
             })()}
           </div>
@@ -6821,7 +6846,7 @@ ${HR_EMAIL}`;
           {openDoc && <DocDetailModal d={docs.find(x => x.id === openDoc.id) || openDoc} onClose={() => setOpenDoc(null)}
             myEmail={myEmail} isMyTurn={isMyTurn} currentSigner={currentSigner}
             openFile={openFile} onSign={signDoc} onReject={rejectDoc} onRemove={removeDoc} progress={progress} />}
-          {creating && <DocCreateModal onClose={() => setCreating(false)} onCreated={(row) => { setDocs(ds => [row, ...ds]); setCreating(false); }} />}
+          {creating && <DocCreateModal initialDocNo={nextDocNo} onClose={() => setCreating(false)} onCreated={(row) => { setDocs(ds => [row, ...ds]); setCreating(false); }} />}
         </div>
       );
     }
@@ -6909,9 +6934,9 @@ ${HR_EMAIL}`;
     }
 
     // ----- Modal: อัปโหลดเอกสารใหม่ + เลือกผู้เซ็นตามลำดับ -----
-    function DocCreateModal({ onClose, onCreated }) {
+    function DocCreateModal({ onClose, onCreated, initialDocNo }) {
       const [title, setTitle] = useState('');
-      const [docNo, setDocNo] = useState('');
+      const [docNo, setDocNo] = useState(initialDocNo || '');
       const [category, setCategory] = useState('');
       const [desc, setDesc] = useState('');
       const [mainFile, setMainFile] = useState(null);
@@ -6959,8 +6984,8 @@ ${HR_EMAIL}`;
             <div className="grid sm:grid-cols-2 gap-3">
               <div><label className="text-[11px] text-slate-500">ชื่อเอกสาร *</label>
                 <input value={title} onChange={e => setTitle(e.target.value)} className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 mt-0.5" placeholder="เช่น สัญญาจ้างงาน — นายสมชาย" /></div>
-              <div><label className="text-[11px] text-slate-500">เลขที่เอกสาร</label>
-                <input value={docNo} onChange={e => setDocNo(e.target.value)} className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 mt-0.5" placeholder="(ถ้ามี)" /></div>
+              <div><label className="text-[11px] text-slate-500">เลขที่เอกสาร <span className="text-slate-400">(อัตโนมัติ · แก้ได้)</span></label>
+                <input value={docNo} onChange={e => setDocNo(e.target.value)} className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 mt-0.5" placeholder="DOC-2026-001" /></div>
             </div>
             <div><label className="text-[11px] text-slate-500">ประเภทเอกสาร</label>
               <input list="doc-cat-list" value={category} onChange={e => setCategory(e.target.value)} className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 mt-0.5" placeholder="เลือกหรือพิมพ์เอง" />
