@@ -185,6 +185,14 @@ async function listEmployees(){ return _emps.map(e=>JSON.parse(JSON.stringify(e)
 async function createEmployee(p){ const r={ id:'e'+(++_seq), created_at:_nowIso(), ...p }; _emps.push(r); return JSON.parse(JSON.stringify(r)); }
 async function updateEmployee(id, patch){ const i=_emps.findIndex(e=>e.id===id); if(i>=0) _emps[i]={ ..._emps[i], ...patch, id }; return JSON.parse(JSON.stringify(_emps[i])); }
 async function deleteEmployee(id){ const i=_emps.findIndex(e=>e.id===id); if(i>=0) _emps.splice(i,1); }
+/* ----- Org Chart (mock · same version rule as org_chart_save) ----- */
+let _org = null;   // { data:text, version }
+async function loadOrgChart(){ return _org ? { ..._org, updated_at:_nowIso(), updated_by:getActor() } : null; }
+async function saveOrgChart(text, version){
+  if (_org && version !== _org.version) return { ok:false, conflict:true };
+  _org = { data:text, version:(_org ? _org.version : 0) + 1 };
+  return { ok:true, version:_org.version };
+}
 /* ===================== END MOCK BACKEND ===================== */
 `;
 

@@ -13,6 +13,14 @@ recruitment.jchr-global.com {
 		try_files {path} /index.html
 		file_server
 	}
+	# JC Org Studio (ผังองค์กร): บังคับ sandbox + CSP ที่ตัว server ด้วย — แม้มีคนเปิดไฟล์ตรง ๆ หรือฝังจากหน้าอื่น
+	# ก็ยังแยกจาก People Core (อ่าน session/ข้อมูลไม่ได้) และส่งข้อมูลออกไปข้างนอกไม่ได้
+	@orgstudio path /org-studio/*
+	header @orgstudio {
+		Content-Security-Policy "default-src 'none'; script-src 'unsafe-inline' https://cdnjs.cloudflare.com; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src data: blob:; connect-src https://cdnjs.cloudflare.com; worker-src blob: https://cdnjs.cloudflare.com; frame-src blob:; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'; sandbox allow-scripts allow-modals allow-downloads allow-forms"
+		Referrer-Policy "no-referrer"
+		Cache-Control "no-cache"
+	}
 	header {
 		X-Frame-Options "SAMEORIGIN"
 		X-Content-Type-Options "nosniff"

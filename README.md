@@ -15,6 +15,8 @@
 ```
 recruitment-tracker/
 ├── supabase/schema.sql        ← รัน 1 ครั้งใน Supabase SQL Editor
+├── supabase/org_chart.sql     ← เมนู 🏛 ผังองค์กร (ดู ORG_CHART_SETUP.md)
+├── public/org-studio/         ← JC Org Studio (ผังองค์กร) เปิดในเมนู 🏛 ผังองค์กร
 ├── src/
 │   ├── App.jsx                ← UI ทั้งหมด (Dashboard, Modal, Step Tracker, Probation)
 │   ├── main.jsx               ← entry point

@@ -245,6 +245,25 @@ export async function upsertBranchSales(branch, sales) {
   if (error) throw error;
 }
 
+// ---------- Org Chart (ผังองค์กร · JC Org Studio) ---------------------------
+// ผังทั้งบริษัท = org-data.json 1 ชุด (text) ในตาราง org_chart แถว id=1.
+// บันทึกผ่าน function org_chart_save เท่านั้น — ตรวจสิทธิ์ Level 2 + version ต้องตรง
+// (หน้าต่างที่เปิดค้างไว้จะบันทึกทับฉบับใหม่กว่าไม่ได้ → ได้ conflict แทน)
+export async function loadOrgChart() {
+  const { data, error } = await supabase
+    .from('org_chart').select('data, version, updated_at, updated_by').eq('id', 1).maybeSingle();
+  if (error) throw error;
+  return data ?? null;   // null = ยังไม่เคยบันทึกผัง
+}
+export async function saveOrgChart(text, version) {
+  const { data, error } = await supabase.rpc('org_chart_save', { p_data: text, p_version: version ?? null });
+  if (error) {
+    if (/version_conflict/.test(error.message || '')) return { ok: false, conflict: true };
+    throw error;
+  }
+  return { ok: true, version: data };
+}
+
 // ---------- Documents (เอกสารเซ็นออนไลน์ · e-signature workflow) -----------
 // เอกสาร 1 ใบ = ไฟล์หลัก + ไฟล์ประกอบหลายไฟล์ + ผู้เซ็นเรียงตามลำดับ.
 // ไฟล์จริงอยู่ใน bucket "recruitment" (path documents/...) · ตารางเก็บ metadata.

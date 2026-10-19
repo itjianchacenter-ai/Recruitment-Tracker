@@ -11,6 +11,7 @@ import {
   listAtsCandidates, createAtsCandidate, updateAtsCandidate, deleteAtsCandidate, uploadResume,
   listEmployees, createEmployee, updateEmployee, deleteEmployee,
   listBranchSales, upsertBranchSales,
+  loadOrgChart, saveOrgChart,
   listDocuments, createDocument, updateDocument, deleteDocument, uploadDocFile
 } from './lib/supabase.js';
 
@@ -4637,12 +4638,156 @@ ${HR_EMAIL}`;
       );
     }
 
-    function HRDashboard({ user, candidates, setCandidates }) {
+    // =========================================================================
+    // JC Org Studio (ผังองค์กร) — แอปผังองค์กรไฟล์เดียว (public/org-studio/index.html)
+    // แยกจาก People Core ชัดเจน: เปิดใน iframe แบบ sandbox (ไม่มี allow-same-origin) →
+    // Org Studio มี origin ของตัวเอง อ่าน session / supabase / ข้อมูล HR อื่นของ People Core
+    // ไม่ได้เลย. คุยกันผ่าน postMessage ได้แค่คำสั่งในรายการ ORG_OPS ข้างล่างเท่านั้น:
+    //   hello → สิทธิ์แก้ไข + draft/ค่าหน้าจอที่ฝากเก็บไว้ · load / save ผัง (ตาราง org_chart)
+    //   ls:* / ss:* → ฝากเก็บ localStorage/sessionStorage ของ Org Studio (key ขึ้นต้น "orgstudio:")
+    // สิทธิ์แก้ไข = admin Level 2 ของ People Core (ตรวจซ้ำในฐานข้อมูลที่ org_chart_save)
+    // =========================================================================
+    const ORG_LS = 'orgstudio:';
+    function orgStoreDump(store) {
+      const out = {};
+      try {
+        for (let i = 0; i < store.length; i++) {
+          const k = store.key(i);
+          if (k && k.startsWith(ORG_LS)) out[k.slice(ORG_LS.length)] = store.getItem(k);
+        }
+      } catch (e) { /* storage blocked → start empty */ }
+      return out;
+    }
+    // ออกจากระบบ → ล้าง draft ผังที่ค้างในเครื่อง (มีชื่อ/รูปพนักงาน) ไม่ให้เหลือบนเครื่องที่ใช้ร่วมกัน
+    function clearOrgStudioStorage() {
+      [localStorage, sessionStorage].forEach(st => {
+        try { Object.keys(orgStoreDump(st)).forEach(k => st.removeItem(ORG_LS + k)); } catch (e) { /* ignore */ }
+      });
+    }
+    const ORG_KEY_RE = /^jc-org-[a-z0-9-]{1,40}$/;
+    // Org Studio แจ้งว่ามีงานที่ยังบันทึกไม่เสร็จหรือไม่ → ถามก่อนออกจากระบบ / ปิดหน้า
+    let _orgDirty = false;
+    if (typeof window !== 'undefined') {
+      window.addEventListener('beforeunload', e => { if (_orgDirty) { e.preventDefault(); e.returnValue = ''; } });
+    }
+    function orgStoreSet(store, k, v) {
+      if (!ORG_KEY_RE.test(String(k))) return;
+      try {
+        if (v == null) { store.removeItem(ORG_LS + k); return; }
+        const text = String(v);
+        if (text.length > 4500000) return;
+        store.setItem(ORG_LS + k, text);
+      } catch (e) { /* quota — Org Studio keeps its own copy for this session */ }
+    }
+    const ORG_OPS = {
+      hello: async () => ({ canEdit: canEdit(), local: orgStoreDump(localStorage), session: orgStoreDump(sessionStorage) }),
+      load: () => loadOrgChart(),
+      save: (text, version) => {
+        if (!canEdit()) return Promise.reject(new Error('Level 1 · view only'));
+        if (typeof text !== 'string') return Promise.reject(new Error('bad chart'));
+        return saveOrgChart(text, version ?? null);
+      },
+      // ฝากเก็บได้เฉพาะ key ของ Org Studio (jc-org-*) และไม่เกิน ~4.5 MB — กันไม่ให้ไปกินโควตา
+      // localStorage ที่ People Core ใช้เก็บการล็อกอิน
+      'ls:set': (k, v) => orgStoreSet(localStorage, k, v),
+      'ls:remove': (k) => orgStoreSet(localStorage, k, null),
+      'ss:set': (k, v) => orgStoreSet(sessionStorage, k, v),
+      'ss:remove': (k) => orgStoreSet(sessionStorage, k, null),
+      state: (dirty) => { _orgDirty = !!dirty; },
+    };
+    function OrgChartView({ active, onTabs, goTab }) {
+      const [full, setFull] = useState(false);
+      const frameRef = useRef(null);
+      const onTabsRef = useRef(onTabs);
+      onTabsRef.current = onTabs;
+      // รับคำสั่งจาก iframe ของเราเท่านั้น (เช็ค e.source) · ตอบกลับไปที่หน้าต่างนั้นตรง ๆ
+      useEffect(() => {
+        const onMsg = async (e) => {
+          const fw = frameRef.current?.contentWindow;
+          if (!fw || e.source !== fw) return;
+          const m = e.data;
+          if (!m || m.jcOrg !== 1) return;
+          if (m.op === 'tabs') {   // รายชื่อบอร์ดในผัง → เมนูย่อยในแถบซ้าย (ข้อความล้วน)
+            const [list, cur] = Array.isArray(m.args) ? m.args : [];
+            if (Array.isArray(list)) onTabsRef.current?.(list.slice(0, 50).map(t => ({ id: String(t?.id ?? ''), label: String(t?.label ?? '').slice(0, 80), sys: !!t?.sys })), String(cur ?? ''));
+            return;
+          }
+          if (!Object.prototype.hasOwnProperty.call(ORG_OPS, m.op)) return;
+          const args = Array.isArray(m.args) ? m.args.slice(0, 2) : [];
+          let reply;
+          try { reply = { result: await ORG_OPS[m.op](...args) }; }
+          catch (err) { reply = { error: err?.message || String(err) }; }
+          if (m.id != null) fw.postMessage({ jcOrg: 1, id: m.id, ...reply }, '*');   // sandbox origin = "null"
+        };
+        window.addEventListener('message', onMsg);
+        return () => window.removeEventListener('message', onMsg);
+      }, []);
+      // เลือกเมนูย่อย (บอร์ด) จากแถบซ้าย
+      useEffect(() => {
+        if (!goTab?.id) return;
+        try { frameRef.current?.contentWindow?.postMessage({ jcOrg: 1, cmd: 'tab', tab: goTab.id }, '*'); } catch (e) { /* ignore */ }
+      }, [goTab]);
+      // กลับมาที่หน้านี้ → ให้ผังจัดเลย์เอาต์ใหม่ (ตอนซ่อนอยู่ เบราว์เซอร์ไม่วาดเส้นเชื่อมให้)
+      useEffect(() => {
+        if (!active) return;
+        const t = setTimeout(() => {
+          try { frameRef.current?.contentWindow?.postMessage({ jcOrg: 1, cmd: 'relayout' }, '*'); } catch (e) { /* ignore */ }
+        }, 80);
+        return () => clearTimeout(t);
+      }, [active, full]);
+      useEffect(() => {
+        if (!full) return;
+        const k = e => e.key === 'Escape' && e.target === document.body && setFull(false);
+        document.addEventListener('keydown', k);
+        return () => document.removeEventListener('keydown', k);
+      }, [full]);
+      return (
+        <div className={full ? 'fixed inset-0 z-[90] bg-[#FCFDFB] flex flex-col' : 'rounded-2xl bg-white ring-1 ring-[#DDE4DC] shadow-[0_1px_2px_rgba(20,40,34,.06),0_18px_40px_-24px_rgba(20,40,34,.45)] overflow-hidden'}>
+          <div className="flex items-center justify-between gap-2 flex-wrap px-3 py-1.5 bg-[#F7F9F6] border-b border-[#DDE4DC]">
+            <div className="text-[11.5px] text-[#465350] flex items-center gap-1.5">
+              <span className={`w-1.5 h-1.5 rounded-full ${canEdit() ? 'bg-[#12886B]' : 'bg-amber-500'}`} />
+              {canEdit() ? 'กดปุ่ม Admin มุมขวาบนของผังเพื่อแก้ไข · ระบบบันทึกให้อัตโนมัติ' : 'ดูได้อย่างเดียว (Level 1)'}
+            </div>
+            <button onClick={() => setFull(f => !f)} className="text-[11.5px] bg-white border border-[#DDE4DC] hover:border-[#C2CCC5] rounded-lg px-2.5 py-1 text-[#465350] ibtn">
+              {full ? '✕ ออกจากเต็มจอ' : '⛶ เต็มจอ'}
+            </button>
+          </div>
+          <iframe
+            ref={frameRef}
+            src="/org-studio/index.html"
+            title="JC Org Studio — ผังองค์กร"
+            sandbox="allow-scripts allow-modals allow-downloads allow-forms"
+            referrerPolicy="no-referrer"
+            className={full ? 'flex-1 w-full border-0' : 'block w-full border-0 bg-white'}
+            style={full ? undefined : { height: 'calc(100vh - 136px)', minHeight: 520 }}
+          />
+        </div>
+      );
+    }
+
+    function HRDashboard({ user, candidates, setCandidates, onSignOut }) {
       const [opening, setOpening] = useState(null);
       const [showAddForm, setShowAddForm] = useState(false);
       const [showDirectProbation, setShowDirectProbation] = useState(false);
       const [filter, setFilter] = useState({ dept:'', step:'', type:'', q:'' });
       const [tab, setTab] = useState('reports');
+      // เมนูหลัก 2 ระบบ: 'core' = JC People Core · 'org' = JC Org Studio (ผังองค์กร)
+      // เปิด Org Studio ครั้งแรกแล้วคงไว้ (ซ่อนเมื่อสลับกลับ) — งานที่กำลังบันทึกไม่หลุด
+      const [module, setModule] = useState('core');
+      const [orgSeen, setOrgSeen] = useState(false);
+      useEffect(() => { if (module === 'org') setOrgSeen(true); }, [module]);
+      const [orgTabs, setOrgTabs] = useState([]);          // บอร์ดในผัง (ส่งมาจาก Org Studio)
+      const [orgActive, setOrgActive] = useState('');
+      const [orgGo, setOrgGo] = useState(null);            // {id, n} — สั่งเปลี่ยนบอร์ด
+      const [navOpen, setNavOpen] = useState(false);       // แถบเมนูบนจอเล็ก
+      const onOrgTabs = useCallback((list, cur) => { setOrgTabs(list); setOrgActive(cur); }, []);
+      const goCore = (t) => { setModule('core'); if (t) setTab(t); setNavOpen(false); };
+      const goOrg = (id) => { setModule('org'); if (id) { setOrgActive(id); setOrgGo({ id, n: Date.now() }); } setNavOpen(false); };
+      const CORE_MENU = [
+        ['reports', '📊', 'Reports / KPI'], ['pipeline', '📋', 'Pipeline'], ['documents', '✍️', 'Document'],
+        ['employees', '👥', 'Employee Database'], ['foreigners', '🌏', 'Foreigners Database'], ['candidates', '🗂', 'Candidate Database'],
+        ['branches', '🏬', 'Branches Manning'], ['hq', '🏢', 'HQ Manning'], ['history', '🗂', 'ประวัติทดลองงาน'],
+      ];
       const [showUsers, setShowUsers] = useState(false);
       const [accounts, setAccounts] = useState([]);
       const [accountsLoading, setAccountsLoading] = useState(false);
@@ -4961,44 +5106,111 @@ ${HR_EMAIL}`;
       }
 
       return (
-        <div className="min-h-screen">
-          <header className="bg-white border-b border-slate-200 sticky top-0 z-30">
-            <div className="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between gap-4">
-              <div className="flex items-center gap-3">
-                <JianchaLogo size={40} />
-                <div className="pl-1 border-l border-slate-200">
-                  <h1 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight pl-2 leading-tight">JC People Core</h1>
-                  <p className="text-xs text-slate-500 pl-2">ระบบบริหารงานบุคคล · HR Internal</p>
+        <div className="min-h-screen lg:flex">
+          {/* ===== แถบเมนูซ้าย: ระบบเดิม (JC People Core) · ระบบใหม่ (JC Org Studio) ===== */}
+          {navOpen && <div className="fixed inset-0 bg-black/40 z-40 lg:hidden" onClick={() => setNavOpen(false)} />}
+          <aside className={`${navOpen ? 'fixed inset-y-0 left-0 z-50 flex' : 'hidden'} lg:flex lg:sticky lg:top-0 lg:z-auto w-[264px] shrink-0 h-screen flex-col text-[#F4F6F3] bg-gradient-to-b from-[#3D4F2D] via-[#323F27] to-[#2B302E] shadow-[4px_0_24px_-8px_rgba(20,26,24,.45)]`}>
+            {/* แบรนด์ (CI: โลโก้ JIANCHA บนการ์ดขาว) */}
+            <div className="px-4 pt-5 pb-4">
+              <div className="bg-white rounded-2xl px-4 py-3 flex items-center justify-center shadow-[0_6px_18px_-6px_rgba(0,0,0,.45)] ring-1 ring-black/5"><JianchaLogo size={30} /></div>
+              <div className="mt-2.5 text-center text-[10px] tracking-[0.22em] uppercase text-[#C9D3C2]/80">HR Internal System</div>
+            </div>
+
+            <div className="flex-1 overflow-y-auto px-3 pb-4 space-y-6">
+              {/* ===== ระบบเดิม ===== */}
+              <section>
+                <div className="px-2 mb-2 text-[10px] font-semibold tracking-[0.16em] uppercase text-[#C9D3C2]/70">ระบบเดิม</div>
+                <button onClick={() => goCore()} className={`w-full text-left rounded-xl px-3.5 py-3 transition-all duration-200 ibtn ${module === 'core' ? 'bg-[#EFE6D3] text-[#3B2F14] ring-1 ring-[#D6C6A2] shadow-[0_8px_20px_-10px_rgba(0,0,0,.6)]' : 'bg-white/[0.07] text-white ring-1 ring-white/10 hover:bg-white/[0.12]'}`}>
+                  <div className="flex items-center gap-2.5">
+                    <span className={`w-8 h-8 rounded-lg grid place-items-center text-base ${module === 'core' ? 'bg-white/70' : 'bg-white/10'}`}>👥</span>
+                    <span className="min-w-0">
+                      <span className="block text-[14px] font-bold leading-tight">JC People Core</span>
+                      <span className={`block text-[11px] ${module === 'core' ? 'text-[#6A5424]' : 'text-[#C9D3C2]/80'}`}>ระบบบริหารงานบุคคล</span>
+                    </span>
+                  </div>
+                </button>
+                <nav className="mt-2 space-y-0.5" aria-label="เมนู JC People Core">
+                  {CORE_MENU.map(([id, ic, label]) => {
+                    const on = module === 'core' && tab === id;
+                    return (
+                      <button key={id} onClick={() => goCore(id)} className={`relative w-full flex items-center gap-2.5 text-left text-[13px] rounded-lg pl-4 pr-3 py-[7px] transition-colors ibtn ${on ? 'bg-white/[0.12] text-white font-semibold' : 'text-[#DDE4DC]/85 hover:bg-white/[0.07] hover:text-white'}`}>
+                        {on && <span className="absolute left-1 top-1.5 bottom-1.5 w-[3px] rounded-full bg-[#5FD3A8]" />}
+                        <span className="w-5 text-center shrink-0">{ic}</span><span className="truncate">{label}</span>
+                      </button>
+                    );
+                  })}
+                  {canEdit() && <button onClick={() => { setShowUsers(true); setNavOpen(false); }} className="w-full flex items-center gap-2.5 text-left text-[13px] rounded-lg pl-4 pr-3 py-[7px] text-[#DDE4DC]/85 hover:bg-white/[0.07] hover:text-white transition-colors ibtn"><span className="w-5 text-center shrink-0">🔑</span><span className="truncate">ผู้ใช้ & รหัสผ่าน</span></button>}
+                </nav>
+              </section>
+
+              {/* ===== ระบบใหม่ ===== */}
+              <section>
+                <div className="px-2 mb-2 flex items-center gap-1.5 text-[10px] font-semibold tracking-[0.16em] uppercase text-[#C9D3C2]/70">ระบบใหม่ <span className="normal-case tracking-normal text-[9px] font-bold bg-[#A87A22] text-white rounded px-1.5 py-px">NEW</span></div>
+                <button onClick={() => goOrg()} className={`w-full text-left rounded-xl px-3.5 py-3 transition-all duration-200 ibtn ${module === 'org' ? 'bg-[#EFE6D3] text-[#3B2F14] ring-1 ring-[#D6C6A2] shadow-[0_8px_20px_-10px_rgba(0,0,0,.6)]' : 'bg-white/[0.07] text-white ring-1 ring-white/10 hover:bg-white/[0.12]'}`}>
+                  <div className="flex items-center gap-2.5">
+                    <span className={`w-8 h-8 rounded-lg grid place-items-center text-base ${module === 'org' ? 'bg-white/70' : 'bg-white/10'}`}>🏛</span>
+                    <span className="min-w-0">
+                      <span className="block text-[14px] font-bold leading-tight">JC Org Studio</span>
+                      <span className={`block text-[11px] ${module === 'org' ? 'text-[#6A5424]' : 'text-[#C9D3C2]/80'}`}>ผังโครงสร้างองค์กร</span>
+                    </span>
+                  </div>
+                </button>
+                <nav className="mt-2.5 ml-[22px] pl-3 border-l border-white/15 space-y-1.5" aria-label="เมนู JC Org Studio">
+                  {orgTabs.length === 0
+                    ? <div className="text-[11.5px] text-[#C9D3C2]/75 py-1 leading-relaxed">{orgSeen ? 'กำลังโหลดผัง…' : 'กดที่ JC Org Studio เพื่อเปิดผัง แล้วเมนูย่อย (บอร์ดในผัง) จะขึ้นที่นี่'}</div>
+                    : orgTabs.map(t => {
+                      const on = module === 'org' && orgActive === t.id;
+                      return (
+                        <button key={t.id} onClick={() => goOrg(t.id)} title={t.label} className={`relative w-full text-left text-[12.5px] leading-snug rounded-lg px-3 py-2 transition-all duration-150 ibtn ${on ? 'bg-white text-[#141A18] font-semibold shadow-[0_6px_14px_-8px_rgba(0,0,0,.7)]' : 'bg-white/[0.06] text-[#F4F6F3] ring-1 ring-white/10 hover:bg-white/[0.11]'}`}>
+                          {on && <span className="absolute -left-[15px] top-1/2 -translate-y-1/2 w-[7px] h-[7px] rounded-full bg-[#5FD3A8] ring-2 ring-[#2F3A27]" />}
+                          <span className="line-clamp-2">{t.sys ? '⚙ ' : ''}{t.label}</span>
+                        </button>
+                      );
+                    })}
+                </nav>
+              </section>
+            </div>
+
+            {/* ผู้ใช้ + ออกจากระบบ */}
+            <div className="m-3 mt-0 rounded-xl bg-black/20 ring-1 ring-white/10 px-3 py-2.5">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 shrink-0 rounded-full bg-[#EFE6D3] text-[#3B2F14] grid place-items-center text-xs font-bold ring-2 ring-white/20">{String(user.name || 'HR').slice(0, 2)}</div>
+                <div className="min-w-0 flex-1">
+                  <div className="text-[13px] font-semibold truncate">{user.name}</div>
+                  <div className="text-[11px] text-[#C9D3C2]/80">{canEdit() ? 'แก้ไขได้ · Level 2' : 'ดูอย่างเดียว · Level 1'}</div>
+                </div>
+                <button onClick={onSignOut} title="ออกจากระบบ" className="shrink-0 text-[11.5px] rounded-lg px-2.5 py-1.5 bg-white/10 hover:bg-white/20 text-white transition-colors ibtn">ออกจากระบบ</button>
+              </div>
+            </div>
+          </aside>
+
+          {/* ===== เนื้อหา ===== */}
+          <div className="flex-1 min-w-0">
+            <header className="bg-white/90 backdrop-blur border-b border-[#DDE4DC] sticky top-0 z-30 shadow-[0_1px_2px_rgba(20,40,34,.04),0_8px_20px_-16px_rgba(20,40,34,.25)]">
+              <div className="px-4 lg:px-6 py-3 flex items-center justify-between gap-3">
+                <div className="flex items-center gap-3 min-w-0">
+                  <button onClick={() => setNavOpen(true)} className="lg:hidden w-9 h-9 grid place-items-center rounded-lg border border-slate-200 text-slate-600 ibtn" aria-label="เปิดเมนู">☰</button>
+                  <div className="min-w-0">
+                    <div className="text-[11px] text-slate-400 truncate">
+                      {module === 'org' ? 'ระบบใหม่' : 'ระบบเดิม'} <span className="mx-1 text-slate-300">›</span> {module === 'org' ? 'JC Org Studio' : 'JC People Core'}
+                    </div>
+                    <h1 className="text-lg sm:text-xl font-bold text-[#141A18] tracking-tight leading-tight truncate">
+                      {module === 'org'
+                        ? (orgTabs.find(t => t.id === orgActive)?.label || 'ผังโครงสร้างองค์กร')
+                        : (CORE_MENU.find(m => m[0] === tab)?.[2] || 'ระบบบริหารงานบุคคล')}
+                    </h1>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 text-xs text-slate-500 shrink-0">
+                  <span className="hidden md:inline-flex items-center gap-1.5 bg-[#F7F9F6] border border-[#DDE4DC] rounded-lg px-2.5 py-1.5">📅 {fmtDate(today())}</span>
+                  {!canEdit() && <span className="inline-flex items-center gap-1 px-2 py-1.5 rounded-lg border bg-amber-50 text-amber-700 border-amber-200" title="Admin Level 1 · เข้าดูได้อย่างเดียว">👁 ดูอย่างเดียว</span>}
                 </div>
               </div>
-              <div className="flex items-center gap-2 text-xs text-slate-500">
-                <span className="hidden md:inline">{fmtDate(today())}</span>
-                <span className="hidden sm:inline-flex items-center gap-1 bg-emerald-50 text-emerald-700 px-2 py-1 rounded-lg border border-emerald-200">
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span> {user.name}
-                </span>
-                <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-lg border ${canEdit() ? 'bg-indigo-50 text-indigo-700 border-indigo-200' : 'bg-amber-50 text-amber-700 border-amber-200'}`} title={canEdit() ? 'Admin Level 2 · แก้ไขได้ทุกอย่าง' : 'Admin Level 1 · เข้าดูได้อย่างเดียว'}>
-                  {canEdit() ? '🛡 Level 2' : '👁 Level 1 · อ่านอย่างเดียว'}
-                </span>
-              </div>
-            </div>
-          </header>
+            </header>
 
-          <main className="max-w-7xl mx-auto px-4 py-6 space-y-6">
-            <div className="flex items-center gap-2 flex-wrap">
-              <div className="flex items-center gap-2 text-sm flex-wrap">
-                <button onClick={() => setTab('reports')} className={`bg-white border rounded-xl px-4 py-1.5 font-medium ibtn ${tab==='reports' ? 'border-slate-300 shadow-sm text-slate-900' : 'border-slate-200 text-slate-500 hover:text-slate-700 hover:border-slate-300'}`}>📊 Reports / KPI</button>
-                <button onClick={() => setTab('pipeline')} className={`bg-white border rounded-xl px-4 py-1.5 font-medium ibtn ${tab==='pipeline' ? 'border-slate-300 shadow-sm text-slate-900' : 'border-slate-200 text-slate-500 hover:text-slate-700 hover:border-slate-300'}`}>📋 Pipeline</button>
-                <button onClick={() => setTab('documents')} className={`bg-white border rounded-xl px-4 py-1.5 font-medium ibtn ${tab==='documents' ? 'border-slate-300 shadow-sm text-slate-900' : 'border-slate-200 text-slate-500 hover:text-slate-700 hover:border-slate-300'}`}>✍️ Document</button>
-                <button onClick={() => setTab('employees')} className={`bg-white border rounded-xl px-4 py-1.5 font-medium ibtn ${tab==='employees' ? 'border-slate-300 shadow-sm text-slate-900' : 'border-slate-200 text-slate-500 hover:text-slate-700 hover:border-slate-300'}`}>👥 Employee Database</button>
-                <button onClick={() => setTab('foreigners')} className={`bg-white border rounded-xl px-4 py-1.5 font-medium ibtn ${tab==='foreigners' ? 'border-slate-300 shadow-sm text-slate-900' : 'border-slate-200 text-slate-500 hover:text-slate-700 hover:border-slate-300'}`}>🌏 Foreigners Database</button>
-                <button onClick={() => setTab('candidates')} className={`bg-white border rounded-xl px-4 py-1.5 font-medium ibtn ${tab==='candidates' ? 'border-slate-300 shadow-sm text-slate-900' : 'border-slate-200 text-slate-500 hover:text-slate-700 hover:border-slate-300'}`}>🗂 Candidate Database</button>
-                <button onClick={() => setTab('branches')} className={`bg-white border rounded-xl px-4 py-1.5 font-medium ibtn ${tab==='branches' ? 'border-slate-300 shadow-sm text-slate-900' : 'border-slate-200 text-slate-500 hover:text-slate-700 hover:border-slate-300'}`}>🏬 Branches Manning</button>
-                <button onClick={() => setTab('hq')} className={`bg-white border rounded-xl px-4 py-1.5 font-medium ibtn ${tab==='hq' ? 'border-slate-300 shadow-sm text-slate-900' : 'border-slate-200 text-slate-500 hover:text-slate-700 hover:border-slate-300'}`}>🏢 HQ Manning</button>
-                <button onClick={() => setTab('history')} className={`bg-white border rounded-xl px-4 py-1.5 font-medium ibtn ${tab==='history' ? 'border-slate-300 shadow-sm text-slate-900' : 'border-slate-200 text-slate-500 hover:text-slate-700 hover:border-slate-300'}`}>🗂 ประวัติทดลองงาน</button>
-                {canEdit() && <button onClick={() => setShowUsers(true)} className="bg-white border border-slate-200 hover:border-slate-300 rounded-xl px-4 py-1.5 font-medium text-slate-700 ibtn">👥 ผู้ใช้ & รหัสผ่าน</button>}
-              </div>
-            </div>
+          {(module === 'org' || orgSeen) && <section className={module === 'org' ? 'px-3 sm:px-4 lg:px-5 py-4' : 'hidden'}><OrgChartView active={module === 'org'} onTabs={onOrgTabs} goTab={orgGo} /></section>}
 
+          <main className={module === 'core' ? 'max-w-7xl mx-auto px-4 py-6 space-y-6' : 'hidden'}>
             {tab === 'reports' && <ReportsView candidates={candidates} />}
             {tab === 'history' && <PassedProbationPanel candidates={candidates} />}
             {tab === 'branches' && <BranchesManning cfg={MANNING_CFG.branch} />}
@@ -5078,6 +5290,7 @@ ${HR_EMAIL}`;
             )}
             </>)}
           </main>
+          </div>
 
           {opened && (
             <Detail
@@ -7595,6 +7808,9 @@ ${HR_EMAIL}`;
         : HR_USERS[1];
 
       async function handleSignOut() {
+        if (_orgDirty && !window.confirm('ผังองค์กรยังบันทึกไม่เสร็จ — ถ้าออกจากระบบตอนนี้ งานที่แก้ล่าสุดจะหาย\nต้องการออกจากระบบเลยหรือไม่?')) return;
+        _orgDirty = false;
+        clearOrgStudioStorage();
         try { await signOut(); } catch (e) { /* ignore */ }
         setSession(null);
         setCandidates([]);
@@ -7619,13 +7835,13 @@ ${HR_EMAIL}`;
       return (
         <>
           <ToastContainer />
-          {viewRole === 'hr'       && <HRDashboard user={user} candidates={candidates} setCandidates={setCandidates} />}
+          {viewRole === 'hr'       && <HRDashboard user={user} candidates={candidates} setCandidates={setCandidates} onSignOut={handleSignOut} />}
           {viewRole === 'approver' && <ApproverView candidates={candidates} myEmail={user.email} myName={user.name} patchCandidate={patchCandidate} />}
-          <button onClick={handleSignOut} title="ออกจากระบบ"
+          {viewRole !== 'hr' && <button onClick={handleSignOut} title="ออกจากระบบ"
             style={{ position:'fixed', left:12, bottom:12, zIndex:80 }}
             className="bg-white border border-slate-200 hover:border-slate-300 text-slate-600 text-xs font-medium px-3 py-2 rounded-lg shadow ibtn">
             🚪 ออกจากระบบ · {user.name}
-          </button>
+          </button>}
         </>
       );
     }
